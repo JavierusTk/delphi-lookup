@@ -1,0 +1,2 @@
+# Python dependencies for CHM extraction
+pychm>=0.8.6

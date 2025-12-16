@@ -1,0 +1,9 @@
+{
+  "_comment": "delphi-lookup Configuration - Copy to delphi-lookup.json and customize",
+  "_note": "FTS5-only mode is recommended. Embeddings are experimental and not recommended for AI agents.",
+
+  "database": "delphi_symbols.db",
+  "buffer_size": 500,
+  "category": "user",
+  "num_results": 5
+}

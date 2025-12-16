@@ -1,0 +1,223 @@
+{
+  "version": "1.0",
+  "description": "Ground truth dataset for vector search evaluation",
+  "created": "2025-12",
+  "queries": [
+    {
+      "id": "C1-001",
+      "category": 1,
+      "category_name": "conceptual",
+      "query": "enviar email con archivo adjunto",
+      "expected_patterns": ["*Mail*", "*Email*", "*Attach*", "*Send*"],
+      "expected_symbols": ["SendMail", "EmailAttachment", "DoSendEmail", "PrepararEmail"],
+      "notes": "Funciones de envío de correo electrónico"
+    },
+    {
+      "id": "C1-002",
+      "category": 1,
+      "category_name": "conceptual",
+      "query": "validar datos antes de guardar",
+      "expected_patterns": ["*BeforePost*", "*Validar*", "*Validate*", "*Check*"],
+      "expected_symbols": ["BeforePost", "ValidarFacturaParaAlta", "DoValidate"],
+      "notes": "Validación pre-guardado en DataModules"
+    },
+    {
+      "id": "C1-003",
+      "category": 1,
+      "category_name": "conceptual",
+      "query": "exportar datos a Excel",
+      "expected_patterns": ["*Excel*", "*XLS*", "*Export*", "*Spreadsheet*"],
+      "expected_symbols": ["ExportarExcel", "EmitirExcel", "ExportarEXCEL_347", "DoHojaDeVueloGenericaExcel"],
+      "notes": "Exportación a formato Excel/XLS"
+    },
+    {
+      "id": "C1-004",
+      "category": 1,
+      "category_name": "conceptual",
+      "query": "calcular totales de factura",
+      "expected_patterns": ["*Total*Factura*", "*Calcular*", "*Sumar*", "*Factura*"],
+      "expected_symbols": ["CalcularTotalFactura", "CalcularTotales", "SumarLineas", "RecalcularFactura"],
+      "notes": "Cálculo de importes en facturas"
+    },
+    {
+      "id": "C1-005",
+      "category": 1,
+      "category_name": "conceptual",
+      "query": "conectar a base de datos",
+      "expected_patterns": ["*Connect*", "*Database*", "*Open*", "*Connection*"],
+      "expected_symbols": ["OpenDatabase", "Connect", "CreateConnection", "TDatabaseConnection"],
+      "notes": "Conexión a base de datos"
+    },
+    {
+      "id": "C2-001",
+      "category": 2,
+      "category_name": "bilingual",
+      "query": "invoice total calculation",
+      "expected_patterns": ["*Factura*", "*Total*", "*Calcular*", "*Invoice*"],
+      "expected_symbols": ["CalcularTotalFactura", "TotalFactura", "SumarFactura"],
+      "notes": "Query inglés, código español"
+    },
+    {
+      "id": "C2-002",
+      "category": 2,
+      "category_name": "bilingual",
+      "query": "user management",
+      "expected_patterns": ["*Usuario*", "*User*", "*Login*", "*Gestion*"],
+      "expected_symbols": ["TUsuario", "GestionUsuarios", "UserManager", "LoginForm"],
+      "notes": "Query inglés, código español"
+    },
+    {
+      "id": "C2-003",
+      "category": 2,
+      "category_name": "bilingual",
+      "query": "date formatting",
+      "expected_patterns": ["*Fecha*", "*Date*", "*Format*"],
+      "expected_symbols": ["FormatearFecha", "FechaToStr", "DateToStr", "ObtenerFecha"],
+      "notes": "Formateo de fechas"
+    },
+    {
+      "id": "C2-004",
+      "category": 2,
+      "category_name": "bilingual",
+      "query": "customer list",
+      "expected_patterns": ["*Cliente*", "*Customer*", "*List*"],
+      "expected_symbols": ["ListaClientes", "ClientesG2K", "TCliente"],
+      "notes": "Lista de clientes"
+    },
+    {
+      "id": "C3-001",
+      "category": 3,
+      "category_name": "functionality",
+      "query": "manejo de errores y excepciones",
+      "expected_patterns": ["*Error*", "*Exception*", "*Try*", "*Handler*"],
+      "expected_symbols": ["ErrorHandler", "OnException", "HandleError", "ErrorInformado"],
+      "notes": "Gestión de excepciones"
+    },
+    {
+      "id": "C3-002",
+      "category": 3,
+      "category_name": "functionality",
+      "query": "lectura de archivos de configuración",
+      "expected_patterns": ["*Config*", "*INI*", "*Setting*", "*Load*"],
+      "expected_symbols": ["LoadConfig", "ReadSettings", "TIniFile", "ConfiguracionGeneral"],
+      "notes": "Lectura de configuración"
+    },
+    {
+      "id": "C3-003",
+      "category": 3,
+      "category_name": "functionality",
+      "query": "comunicación HTTP REST",
+      "expected_patterns": ["*HTTP*", "*REST*", "*Request*", "*API*"],
+      "expected_symbols": ["THTTPClient", "RESTRequest", "PostJSON", "GetJSON"],
+      "notes": "Comunicación REST/HTTP"
+    },
+    {
+      "id": "C3-004",
+      "category": 3,
+      "category_name": "functionality",
+      "query": "guardar registro en base de datos",
+      "expected_patterns": ["*Post*", "*Save*", "*Insert*", "*Guardar*"],
+      "expected_symbols": ["Post", "SaveRecord", "InsertRecord", "Guardar"],
+      "notes": "Persistencia de datos"
+    },
+    {
+      "id": "C4-001",
+      "category": 4,
+      "category_name": "business_domain",
+      "query": "proceso de facturación",
+      "expected_patterns": ["*Factura*", "*Invoice*", "*Emitir*", "*Crear*Factura*"],
+      "expected_symbols": ["CrearFactura", "EmitirFactura", "TFactura", "ProcesarFactura"],
+      "notes": "Dominio: Facturación"
+    },
+    {
+      "id": "C4-002",
+      "category": 4,
+      "category_name": "business_domain",
+      "query": "control de stock",
+      "expected_patterns": ["*Stock*", "*Inventario*", "*Existencia*", "*Almacen*"],
+      "expected_symbols": ["ControlStock", "ActualizarStock", "CalcularExistencias", "AjustaStock"],
+      "notes": "Dominio: Almacén"
+    },
+    {
+      "id": "C4-003",
+      "category": 4,
+      "category_name": "business_domain",
+      "query": "registro contable asiento",
+      "expected_patterns": ["*Asiento*", "*Apunte*", "*Contab*", "*Diario*"],
+      "expected_symbols": ["CrearAsiento", "NuevoApunte", "Contabilizar", "AnalizarAsientos"],
+      "notes": "Dominio: Contabilidad"
+    },
+    {
+      "id": "C4-004",
+      "category": 4,
+      "category_name": "business_domain",
+      "query": "pedido de compra",
+      "expected_patterns": ["*Pedido*", "*Compra*", "*Order*", "*Purchase*"],
+      "expected_symbols": ["CrearPedido", "PedidoCompra", "TPedido", "GenerarPedido"],
+      "notes": "Dominio: Compras"
+    },
+    {
+      "id": "C4-005",
+      "category": 4,
+      "category_name": "business_domain",
+      "query": "impuesto IVA declaración",
+      "expected_patterns": ["*IVA*", "*VAT*", "*Impuesto*", "*Tax*"],
+      "expected_symbols": ["CalcularIVA", "DeclaracionIVA", "LibroIva", "IvaImprime"],
+      "notes": "Dominio: Fiscal"
+    },
+    {
+      "id": "C5-001",
+      "category": 5,
+      "category_name": "abstract",
+      "query": "patrón singleton",
+      "expected_patterns": ["*Instance*", "*Singleton*", "*GetInstance*"],
+      "expected_symbols": ["GetInstance", "Instance", "CreateSingletonActivator"],
+      "notes": "Patrón de diseño singleton"
+    },
+    {
+      "id": "C5-002",
+      "category": 5,
+      "category_name": "abstract",
+      "query": "operaciones CRUD",
+      "expected_patterns": ["*Insert*", "*Update*", "*Delete*", "*Select*", "*Save*"],
+      "expected_symbols": ["Insert", "Update", "Delete", "Select", "Save"],
+      "notes": "Operaciones básicas de datos"
+    },
+    {
+      "id": "C5-003",
+      "category": 5,
+      "category_name": "abstract",
+      "query": "validación de formularios",
+      "expected_patterns": ["*Validate*", "*Form*", "*Check*", "*Required*"],
+      "expected_symbols": ["ValidateForm", "CheckFields", "FormValidate", "Required"],
+      "notes": "Validación de entrada de usuario"
+    },
+    {
+      "id": "C5-004",
+      "category": 5,
+      "category_name": "abstract",
+      "query": "iteración sobre colección",
+      "expected_patterns": ["*Iterator*", "*ForEach*", "*Enumerate*", "*List*"],
+      "expected_symbols": ["GetEnumerator", "MoveNext", "ForEach", "Iterate"],
+      "notes": "Patrones de iteración"
+    },
+    {
+      "id": "C5-005",
+      "category": 5,
+      "category_name": "abstract",
+      "query": "serialización JSON",
+      "expected_patterns": ["*JSON*", "*Serialize*", "*ToJSON*", "*FromJSON*"],
+      "expected_symbols": ["ToJSON", "FromJSON", "Serialize", "JSONSerialize"],
+      "notes": "Conversión a/desde JSON"
+    }
+  ],
+  "evaluation_config": {
+    "result_counts": [5, 10],
+    "modes": [
+      {"name": "fts5", "args": ""},
+      {"name": "fts5_vector", "args": "--enable-semantic"},
+      {"name": "fts5_vector_reranker", "args": "--enable-semantic --use-reranker"}
+    ],
+    "metrics": ["precision_at_k", "mrr", "hit_rate"]
+  }
+}

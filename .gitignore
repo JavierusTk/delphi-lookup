@@ -1,0 +1,110 @@
+# =============================================================================
+# delphi-lookup .gitignore
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Delphi Build Output
+# -----------------------------------------------------------------------------
+Win32/
+Win64/
+__history/
+__recovery/
+__DCU_CACHE/
+*.dcu
+*.exe
+*.dll
+*.bpl
+*.dcp
+*.so
+*.apk
+*.drc
+*.map
+*.dres
+*.rsm
+*.tds
+*.dcu
+*.lib
+*.a
+*.o
+*.ocx
+
+# Delphi local files
+*.local
+*.identcache
+*.projdata
+*.tvsconfig
+*.dsk
+
+# -----------------------------------------------------------------------------
+# Database files (generated at runtime)
+# -----------------------------------------------------------------------------
+*.db
+*.db-wal
+*.db-shm
+delphi_symbols.db*
+
+# -----------------------------------------------------------------------------
+# Cache and temporary files
+# -----------------------------------------------------------------------------
+chm_cache_*/
+*.tmp
+*.temp
+*.bak
+*.log
+
+# -----------------------------------------------------------------------------
+# IDE and editor files
+# -----------------------------------------------------------------------------
+.claude/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# -----------------------------------------------------------------------------
+# OS generated files
+# -----------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# -----------------------------------------------------------------------------
+# Python
+# -----------------------------------------------------------------------------
+__pycache__/
+*.pyc
+*.pyo
+.env
+venv/
+
+# -----------------------------------------------------------------------------
+# Project-specific exclusions
+# -----------------------------------------------------------------------------
+# Local batch scripts with hardcoded paths
+delphi-scan.bat
+index-all.bat
+
+# User config file (may contain private URLs)
+delphi-lookup.json
+
+# Internal planning documents
+PLAN-*.md
+
+# Resource files (regenerated on build)
+*.res
+
+# Group project local settings
+*.groupproj.local
+
+# Framework override files (user-specific)
+framework-overrides.json
+
+# -----------------------------------------------------------------------------
+# Keep these files (using negation)
+# -----------------------------------------------------------------------------
+# Binary dependencies are in bin/ folder
+!bin/*.dll
+!bin/*.exe
+!bin/README.md
+!bin/LICENSES.md
