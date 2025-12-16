@@ -91,9 +91,6 @@ delphi-lookup.json
 # Internal planning documents
 PLAN-*.md
 
-# Resource files (regenerated on build)
-*.res
-
 # Group project local settings
 *.groupproj.local
 
