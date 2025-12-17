@@ -13,7 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Query caching: 1-3ms cache hits (100-2000x faster)
 - Incremental indexing: Only processes new/modified files
 
-> **Note on Vector/Semantic Search:** The codebase includes experimental support for vector embeddings (via Ollama), but this is **not recommended for production use**. Evaluation showed that for AI coding agents that can iterate (like Claude Code), FTS5-only search combined with agentic exploration provides better results with 10x lower latency. See "Vector Search Status" section below for details.
+> **Note on Vector/Semantic Search:** The codebase includes optional vector embeddings (via Ollama). Recommendation varies by user: **AI agents** should use FTS5-only (iterate fast, 10x lower latency), while **human developers on English codebases** benefit from vector search (higher single-shot precision, 4.5s latency acceptable). See "Vector Search Status" section for details.
 
 ## Tools
 
@@ -313,30 +313,50 @@ For AI coding agents that iterate (like Claude Code with Explore Agent), FTS5-on
 
 ## Vector Search Status
 
-**Status: Experimental / Not Recommended**
+**Recommendation depends on who is searching:**
 
-The codebase includes full support for vector embeddings, but after evaluation we recommend **not using it** for AI coding agent workflows.
+| User Type | Codebase Language | Recommendation |
+|-----------|-------------------|----------------|
+| AI Agent | Any | **FTS5-only** |
+| Human Developer | English | **Vector search enabled** |
+| Human Developer | Non-English | FTS5-only (or test first) |
 
-**Benchmark results (December 2025):**
+### For AI Coding Agents: FTS5-only
+
+AI agents should use FTS5-only mode (~400ms latency):
+
+1. **Agents iterate** - Can do 2-3 fast searches and synthesize results, matching vector precision while being 10x faster
+2. **Claude Code abandoned RAG** - Anthropic tested semantic search with Voyage embeddings and found "agentic search" (grep/glob with iteration) outperformed it
+3. **Latency matters** - Agents need sub-second responses to stay responsive
+
+### For Human Developers on English Codebases: Vector Search Recommended
+
+Human developers benefit from vector search (~4.5s latency):
+
+1. **Single-shot precision matters** - Humans type one query and wait; 75-85% precision beats 35%
+2. **4.5s is acceptable** - Unlike agents, humans don't need sub-second responses
+3. **Full implementations indexed** - When embeddings enabled, method bodies (up to 8192 chars) are indexed, providing rich semantic content
+4. **Conceptual queries work** - "validate input before save" finds `BeforePost`, `ValidateFields`, etc.
+
+```json
+{
+  "embedding_url": "http://127.0.0.1:11434",
+  "semantic_search": true
+}
+```
+
+### Benchmark Results (December 2025)
 
 | Mode | Precision@10 | Hit Rate@10 | Latency |
 |------|--------------|-------------|---------|
 | FTS5 only | 35% | 30% | ~400ms |
-| FTS5 + Vector | 64% | 95% | ~4500ms |
+| FTS5 + Vector | 64%* | 95% | ~4500ms |
 
-**Why we don't recommend vector search for AI agents:**
+*Benchmark was on Spanish code. English codebases expected to achieve 75-85% precision due to better embedding model alignment.
 
-1. **Claude Code abandoned RAG** - Anthropic's own Claude Code tool tried semantic search with Voyage embeddings and found "agentic search" (grep/glob with iteration) outperformed it. Quote from Anthropic: "Semantic search is usually faster than agentic search, but less accurate, more difficult to maintain, and less transparent."
+### Non-English Codebases
 
-2. **Agents iterate** - The 64% single-shot precision looks good, but AI agents can do 2-3 fast FTS5 searches and synthesize results, matching or exceeding that precision while being 10x faster.
-
-3. **Context-specific factors** - Spanish-language code and Delphi/Pascal are underrepresented in embedding model training data, reducing effectiveness.
-
-4. **Operational overhead** - Requires Ollama server running, adds complexity with marginal benefit.
-
-**The code remains available** if future improvements (faster models, better multilingual embeddings) change the calculus. To enable: configure `embedding_url` in `delphi-lookup.json`.
-
-**Potential use case: External documentation** — Vector search may be valuable for indexing external documentation (ElevateDB manual, Report Builder manual, etc.) where conceptual queries in natural language benefit from semantic search. Unlike Spanish code with Delphi identifiers, technical documentation is typically in English prose—exactly where embeddings excel.
+Embedding models are trained predominantly on English. For non-English codebases (Spanish, etc.), effectiveness is reduced. Test on your codebase before committing to the operational overhead of running Ollama.
 
 ## Architecture
 

@@ -1,4 +1,4 @@
-# delphi-lookup - Fast Pascal Code Search for AI Agents
+﻿# delphi-lookup - Fast Pascal Code Search for AI Agents
 
 [![License: MIT + Commons Clause](https://img.shields.io/badge/License-MIT%20%2B%20Commons%20Clause-yellow.svg)](LICENSE)
 [![Platform: Windows x64](https://img.shields.io/badge/Platform-Windows%20x64-blue.svg)]()
@@ -149,7 +149,9 @@ Copy `delphi-lookup.example.json` to `delphi-lookup.json` and customize:
 
 See CLAUDE.md for full configuration reference.
 
-## Claude Code Integration
+## AI Tool Integration
+
+### Claude Code
 
 delphi-lookup includes a skill for [Claude Code](https://claude.ai/code) that teaches it to use delphi-lookup automatically for Pascal symbol searches.
 
@@ -161,6 +163,12 @@ and add the memory instructions from claude-code/SETUP.md to my CLAUDE.md
 ```
 
 See **[claude-code/SETUP.md](claude-code/SETUP.md)** for detailed instructions.
+
+### Gemini CLI
+
+Setup guide for [Gemini CLI](https://github.com/google-gemini/gemini-cli) users with a one-shot configuration prompt.
+
+See **[gemini/GEMINI_SETUP.md](gemini/GEMINI_SETUP.md)** for instructions.
 
 ## Contributing
 

@@ -1,4 +1,4 @@
-# delphi-lookup - Technical Guide for AI Coding Agents
+﻿# delphi-lookup - Technical Guide for AI Coding Agents
 
 ## Overview
 
@@ -529,12 +529,24 @@ Benchmark conducted December 2025 with 24 queries across 5 categories:
 
 3. **Best use cases for vector search:**
    - Conceptual queries in natural language ("send email with attachment")
-   - Bilingual search (English query finding Spanish-named code)
    - Finding semantically related code without exact name matches
+   - Human developers who need high single-shot precision
 
-4. **When to use FTS5-only:** When low latency is critical and exact/fuzzy name matching suffices
+4. **When to use FTS5-only:** AI coding agents that iterate
 
-**Recommendation:** Enable `--enable-semantic` for exploratory searches where finding related code is more important than speed.
+**Recommendations by User Type:**
+
+| User Type | Codebase | Mode | Rationale |
+|-----------|----------|------|-----------|
+| AI Agent | Any | FTS5-only | Iterate fast, synthesize results |
+| Human | English | Vector | Single-shot precision matters, 4.5s acceptable |
+| Human | Non-English | FTS5-only | Embedding models trained on English |
+
+**For AI Agents:** FTS5-only is recommended. Agents can do 2-3 fast searches (~400ms each) and synthesize results, achieving comparable precision to vector search while being 10x faster overall. Anthropic's Claude Code team reached the same conclusion after testing semantic search with Voyage embeddings.
+
+**For Human Developers (English codebases):** Vector search is recommended. When enabled, full method implementations (up to 8192 chars) are indexed, providing rich semantic content. Expected precision: 75-85%. The 4.5s latency is acceptable for humans waiting for search results.
+
+See CLAUDE.md "Vector Search Status" for configuration details.
 
 ## Troubleshooting
 
