@@ -86,6 +86,8 @@ var
   Query: TFDQuery;
   QueryHash: string;
   CacheValid: Integer;
+  ExistingHitCount: Integer;
+  ExistingAvgDuration: Integer;
 begin
   try
     Connection := TFDConnection.Create(nil);
@@ -110,6 +112,78 @@ begin
         FrameworkFilter
       ]);
 
+      // === Update query_cache table (new table) ===
+      // Check if entry exists in query_cache
+      Query.SQL.Text := 'SELECT hit_count, avg_duration_ms FROM query_cache WHERE query_hash = :hash';
+      Query.ParamByName('hash').AsString := QueryHash;
+      Query.Open;
+
+      if not Query.EOF then
+      begin
+        // Entry exists - update it
+        ExistingHitCount := Query.FieldByName('hit_count').AsInteger;
+        ExistingAvgDuration := Query.FieldByName('avg_duration_ms').AsInteger;
+        Query.Close;
+
+        if ACacheHit then
+        begin
+          // Cache hit - just update hit_count and last_seen
+          Query.SQL.Text :=
+            'UPDATE query_cache SET ' +
+            '  hit_count = :hit_count, ' +
+            '  last_seen = CURRENT_TIMESTAMP ' +
+            'WHERE query_hash = :hash';
+          Query.ParamByName('hit_count').AsInteger := ExistingHitCount + 1;
+          Query.ParamByName('hash').AsString := QueryHash;
+        end
+        else
+        begin
+          // Cache miss - update everything (results may have changed after revalidation)
+          Query.SQL.Text :=
+            'UPDATE query_cache SET ' +
+            '  result_ids = :result_ids, ' +
+            '  result_count = :result_count, ' +
+            '  cache_valid = 1, ' +
+            '  hit_count = :hit_count, ' +
+            '  last_seen = CURRENT_TIMESTAMP, ' +
+            '  avg_duration_ms = :avg_duration ' +
+            'WHERE query_hash = :hash';
+          Query.ParamByName('result_ids').AsString := AResultIDs;
+          Query.ParamByName('result_count').AsInteger := AResultCount;
+          Query.ParamByName('hit_count').AsInteger := ExistingHitCount + 1;
+          // Running average
+          Query.ParamByName('avg_duration').AsInteger :=
+            (ExistingAvgDuration * ExistingHitCount + ADurationMs) div (ExistingHitCount + 1);
+          Query.ParamByName('hash').AsString := QueryHash;
+        end;
+
+        Query.ExecSQL;
+      end
+      else
+      begin
+        // Entry doesn't exist - insert new (only for cache misses)
+        Query.Close;
+
+        if not ACacheHit then
+        begin
+          Query.SQL.Text :=
+            'INSERT INTO query_cache (' +
+            '  query_hash, query_text, result_ids, result_count, cache_valid, ' +
+            '  hit_count, first_seen, last_seen, avg_duration_ms' +
+            ') VALUES (' +
+            '  :hash, :query_text, :result_ids, :result_count, 1, ' +
+            '  1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, :avg_duration' +
+            ')';
+          Query.ParamByName('hash').AsString := QueryHash;
+          Query.ParamByName('query_text').AsString := AQueryText;
+          Query.ParamByName('result_ids').AsString := AResultIDs;
+          Query.ParamByName('result_count').AsInteger := AResultCount;
+          Query.ParamByName('avg_duration').AsInteger := ADurationMs;
+          Query.ExecSQL;
+        end;
+      end;
+
+      // === Also log to query_log for analytics (legacy table) ===
       // Cache hits are logged with cache_valid=0 (analytics only)
       // Cache misses are logged with cache_valid=1 (cache source)
       if ACacheHit then
@@ -125,20 +199,21 @@ begin
         '  domain_tags_filter, symbol_type_filter, ' +
         '  num_results_requested, max_distance, ' +
         '  use_semantic_search, use_reranker, candidate_count, ' +
-        '  duration_ms, result_count ' +
+        '  duration_ms, result_count, cache_hit ' +
         ') VALUES (' +
         '  :query_text, :query_hash, :result_ids, :cache_valid, ' +
         '  :content_type_filter, :source_category_filter, :prefer_category, ' +
         '  :domain_tags_filter, :symbol_type_filter, ' +
         '  :num_results, :max_distance, ' +
         '  :use_semantic, :use_reranker, :candidate_count, ' +
-        '  :duration_ms, :result_count ' +
+        '  :duration_ms, :result_count, :cache_hit ' +
         ')';
 
       Query.ParamByName('query_text').AsString := AQueryText;
       Query.ParamByName('query_hash').AsString := QueryHash;
       Query.ParamByName('result_ids').AsString := AResultIDs;
       Query.ParamByName('cache_valid').AsInteger := CacheValid;
+      Query.ParamByName('cache_hit').AsInteger := Integer(ACacheHit);
 
       // Filters - FireDAC requires DataType before Clear for nullable parameters
       if ContentTypeFilter <> '' then
@@ -213,17 +288,45 @@ begin
   end;
 end;
 
-function ExtractResultIDs(AResults: TSearchResultList): string;
+function ExtractResultIDsWithHash(AResults: TSearchResultList; const ADatabaseFile: string): string;
 var
   I: Integer;
   IDList: TStringList;
+  Connection: TFDConnection;
+  Query: TFDQuery;
+  ContentHash: string;
 begin
+  // Format: "id:hash,id:hash,..." for cache validation
   IDList := TStringList.Create;
+  Connection := TFDConnection.Create(nil);
+  Query := TFDQuery.Create(nil);
   try
+    TDatabaseConnectionHelper.ConfigureConnection(Connection, ADatabaseFile, False);
+    Connection.Open;
+    Query.Connection := Connection;
+
     for I := 0 to AResults.Count - 1 do
-      IDList.Add(IntToStr(AResults[I].SymbolID));
+    begin
+      // Get content_hash for this symbol
+      Query.SQL.Text := 'SELECT content_hash FROM symbols WHERE id = :id';
+      Query.ParamByName('id').AsInteger := AResults[I].SymbolID;
+      Query.Open;
+
+      if not Query.EOF then
+        ContentHash := Query.FieldByName('content_hash').AsString
+      else
+        ContentHash := '';
+
+      Query.Close;
+
+      // Format: id:hash (hash may be empty for legacy data)
+      IDList.Add(IntToStr(AResults[I].SymbolID) + ':' + ContentHash);
+    end;
+
     Result := IDList.CommaText;
   finally
+    Query.Free;
+    Connection.Free;
     IDList.Free;
   end;
 end;
@@ -236,6 +339,11 @@ var
   IDList: TStringList;
   I: Integer;
   SearchResult: TSearchResult;
+  SymbolID: Integer;
+  CachedHash, CurrentHash: string;
+  ColonPos: Integer;
+  IDHashPair: string;
+  CacheValid: Boolean;
 begin
   Result := nil;
 
@@ -252,65 +360,123 @@ begin
       Query.SQL.Text := 'PRAGMA journal_mode=WAL';
       Query.ExecSQL;
 
-      // Try to find a valid cache entry
+      // Try to find a valid cache entry in query_cache (new table)
       Query.SQL.Text :=
-        'SELECT result_ids FROM query_log ' +
-        'WHERE query_hash = :hash AND cache_valid = 1 ' +
-        'ORDER BY executed_at DESC LIMIT 1';
+        'SELECT result_ids, result_count FROM query_cache ' +
+        'WHERE query_hash = :hash AND cache_valid = 1';
       Query.ParamByName('hash').AsString := AQueryHash;
       Query.Open;
 
       if not Query.EOF then
       begin
         ResultIDs := Query.FieldByName('result_ids').AsString;
+        var CachedResultCount := Query.FieldByName('result_count').AsInteger;
+        Query.Close;
+
+        // Handle "0 results" cache (empty result_ids but valid cache entry)
+        if (ResultIDs = '') and (CachedResultCount = 0) then
+        begin
+          // Valid cache of zero results - return empty list
+          Result := TSearchResultList.Create;
+          Exit;
+        end;
 
         if ResultIDs <> '' then
         begin
-          Query.Close;
-
-          // Load the actual symbols by IDs
+          // Parse id:hash format and validate each symbol
           IDList := TStringList.Create;
           try
             IDList.CommaText := ResultIDs;
+            CacheValid := True;
 
             Result := TSearchResultList.Create;
 
             for I := 0 to IDList.Count - 1 do
             begin
-              Query.SQL.Text := 'SELECT * FROM symbols WHERE id = :id';
-              Query.ParamByName('id').AsInteger := StrToIntDef(IDList[I], 0);
-              Query.Open;
+              IDHashPair := IDList[I];
 
-              if not Query.EOF then
+              // Parse "id:hash" format
+              ColonPos := Pos(':', IDHashPair);
+              if ColonPos > 0 then
               begin
-                SearchResult := TSearchResult.Create;
-                SearchResult.SymbolID := Query.FieldByName('id').AsInteger;
-                SearchResult.Name := Query.FieldByName('name').AsString;
-                SearchResult.FullName := Query.FieldByName('full_name').AsString;
-                SearchResult.SymbolType := Query.FieldByName('type').AsString;
-                SearchResult.FilePath := Query.FieldByName('file_path').AsString;
-                SearchResult.Content := Query.FieldByName('content').AsString;
-                SearchResult.Comments := Query.FieldByName('comments').AsString;
-                SearchResult.ParentClass := Query.FieldByName('parent_class').AsString;
-                SearchResult.ImplementedInterfaces := Query.FieldByName('implemented_interfaces').AsString;
-                SearchResult.Visibility := Query.FieldByName('visibility').AsString;
-                SearchResult.ContentType := Query.FieldByName('content_type').AsString;
-                SearchResult.SourceCategory := Query.FieldByName('source_category').AsString;
-                SearchResult.MatchType := 'cache_hit';
-                SearchResult.Score := 1.0;
-
-                Result.Add(SearchResult);
+                SymbolID := StrToIntDef(Copy(IDHashPair, 1, ColonPos - 1), 0);
+                CachedHash := Copy(IDHashPair, ColonPos + 1, MaxInt);
+              end
+              else
+              begin
+                // Legacy format (just ID, no hash)
+                SymbolID := StrToIntDef(IDHashPair, 0);
+                CachedHash := '';
               end;
 
+              if SymbolID = 0 then
+              begin
+                CacheValid := False;
+                Break;
+              end;
+
+              // Load symbol and validate hash
+              Query.SQL.Text := 'SELECT *, content_hash FROM symbols WHERE id = :id';
+              Query.ParamByName('id').AsInteger := SymbolID;
+              Query.Open;
+
+              if Query.EOF then
+              begin
+                // Symbol no longer exists - invalidate cache
+                CacheValid := False;
+                Query.Close;
+                Break;
+              end;
+
+              // Validate content hash (if we have one)
+              CurrentHash := Query.FieldByName('content_hash').AsString;
+              if (CachedHash <> '') and (CurrentHash <> '') and (CachedHash <> CurrentHash) then
+              begin
+                // Content has changed - invalidate cache
+                CacheValid := False;
+                Query.Close;
+                Break;
+              end;
+
+              // Hash valid (or not available) - load symbol
+              SearchResult := TSearchResult.Create;
+              SearchResult.SymbolID := Query.FieldByName('id').AsInteger;
+              SearchResult.Name := Query.FieldByName('name').AsString;
+              SearchResult.FullName := Query.FieldByName('full_name').AsString;
+              SearchResult.SymbolType := Query.FieldByName('type').AsString;
+              SearchResult.FilePath := Query.FieldByName('file_path').AsString;
+              SearchResult.Content := Query.FieldByName('content').AsString;
+              SearchResult.Comments := Query.FieldByName('comments').AsString;
+              SearchResult.ParentClass := Query.FieldByName('parent_class').AsString;
+              SearchResult.ImplementedInterfaces := Query.FieldByName('implemented_interfaces').AsString;
+              SearchResult.Visibility := Query.FieldByName('visibility').AsString;
+              SearchResult.ContentType := Query.FieldByName('content_type').AsString;
+              SearchResult.SourceCategory := Query.FieldByName('source_category').AsString;
+              SearchResult.MatchType := 'cache_hit';
+              SearchResult.Score := 1.0;
+
+              Result.Add(SearchResult);
               Query.Close;
             end;
+
+            // If cache is invalid, clear results and invalidate the cache entry
+            if not CacheValid then
+            begin
+              FreeAndNil(Result);
+
+              // Invalidate this specific cache entry
+              Query.SQL.Text := 'UPDATE query_cache SET cache_valid = 0 WHERE query_hash = :hash';
+              Query.ParamByName('hash').AsString := AQueryHash;
+              Query.ExecSQL;
+            end;
+
           finally
             IDList.Free;
           end;
         end;
-      end;
-
-      Query.Close;
+      end
+      else
+        Query.Close;
 
     finally
       Query.Free;
@@ -383,6 +549,7 @@ var
   TotalQueries, FailedQueries, SuccessfulQueries: Integer;
   FailedPercent, SuccessPercent: Double;
   AvgDuration: Double;
+  CacheEntries, ValidCacheEntries, TotalHits, PopularQueries: Integer;
 begin
   if not FileExists(ADatabaseFile) then
   begin
@@ -397,7 +564,7 @@ begin
     Connection.Open;
     Query.Connection := Connection;
 
-    // Get statistics
+    // Get query_log statistics
     Query.SQL.Text :=
       'SELECT ' +
       '  COUNT(*) as total, ' +
@@ -411,6 +578,7 @@ begin
     FailedQueries := Query.FieldByName('failed').AsInteger;
     SuccessfulQueries := Query.FieldByName('successful').AsInteger;
     AvgDuration := Query.FieldByName('avg_duration').AsFloat;
+    Query.Close;
 
     if TotalQueries > 0 then
     begin
@@ -423,13 +591,37 @@ begin
       SuccessPercent := 0;
     end;
 
+    // Get query_cache statistics
+    Query.SQL.Text :=
+      'SELECT ' +
+      '  COUNT(*) as total, ' +
+      '  SUM(CASE WHEN cache_valid = 1 THEN 1 ELSE 0 END) as valid, ' +
+      '  SUM(hit_count) as total_hits, ' +
+      '  SUM(CASE WHEN hit_count >= 3 THEN 1 ELSE 0 END) as popular ' +
+      'FROM query_cache';
+    Query.Open;
+
+    CacheEntries := Query.FieldByName('total').AsInteger;
+    ValidCacheEntries := Query.FieldByName('valid').AsInteger;
+    TotalHits := Query.FieldByName('total_hits').AsInteger;
+    PopularQueries := Query.FieldByName('popular').AsInteger;
+    Query.Close;
+
     WriteLn;
-    WriteLn('Usage Statistics');
-    WriteLn('================');
+    WriteLn('Usage Statistics (query_log)');
+    WriteLn('============================');
     WriteLn(Format('Total queries:      %d', [TotalQueries]));
     WriteLn(Format('Failed (0 results): %d (%.1f%%)', [FailedQueries, FailedPercent]));
     WriteLn(Format('Successful:         %d (%.1f%%)', [SuccessfulQueries, SuccessPercent]));
     WriteLn(Format('Avg duration:       %.0f ms', [AvgDuration]));
+    WriteLn;
+
+    WriteLn('Cache Statistics (query_cache)');
+    WriteLn('==============================');
+    WriteLn(Format('Unique queries:     %d', [CacheEntries]));
+    WriteLn(Format('Valid cache:        %d', [ValidCacheEntries]));
+    WriteLn(Format('Total hits:         %d', [TotalHits]));
+    WriteLn(Format('Popular (3+ hits):  %d', [PopularQueries]));
     WriteLn;
 
   finally
@@ -442,7 +634,7 @@ procedure ClearCache(const ADatabaseFile: string);
 var
   Connection: TFDConnection;
   Query: TFDQuery;
-  RowsAffected: Integer;
+  LogRowsAffected, CacheRowsAffected: Integer;
 begin
   if not FileExists(ADatabaseFile) then
   begin
@@ -457,12 +649,18 @@ begin
     Connection.Open;
     Query.Connection := Connection;
 
-    // Delete all cache entries
+    // Delete all query_cache entries
+    Query.SQL.Text := 'DELETE FROM query_cache';
+    Query.ExecSQL;
+    CacheRowsAffected := Query.RowsAffected;
+
+    // Delete all query_log entries
     Query.SQL.Text := 'DELETE FROM query_log';
     Query.ExecSQL;
-    RowsAffected := Query.RowsAffected;
+    LogRowsAffected := Query.RowsAffected;
 
-    WriteLn(Format('Cache cleared: %d entries deleted', [RowsAffected]));
+    WriteLn(Format('Cache cleared: %d query_cache + %d query_log entries deleted',
+      [CacheRowsAffected, LogRowsAffected]));
 
   finally
     Query.Free;
@@ -724,7 +922,7 @@ begin
 
       // Log query AFTER closing connections (to avoid lock conflicts)
       LogQuery(DatabaseFile, QueryText, SearchResults.Count, SearchDurationMs,
-        ExtractResultIDs(SearchResults), IsCacheHit);
+        ExtractResultIDsWithHash(SearchResults, DatabaseFile), IsCacheHit);
 
       if Assigned(SearchResults) then
         SearchResults.Free;

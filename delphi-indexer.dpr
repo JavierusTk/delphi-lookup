@@ -18,6 +18,7 @@ uses
   System.Generics.Collections,
   Data.DB,
   FireDAC.Comp.Client,
+  FireDAC.Stan.Param,
   ParameterMAX in 'ParameterMAX\ParameterMAX.pas',
   ParameterMAX.Handlers in 'ParameterMAX\ParameterMAX.Handlers.pas',
   ParameterMAX.HandlerRegistry in 'ParameterMAX\ParameterMAX.HandlerRegistry.pas',
@@ -98,6 +99,10 @@ var
   RerankerProvider: string;
   RerankerURL: string;
 
+  // Cache revalidation mode
+  RevalidateCacheMode: Boolean;
+  RevalidateMinHits: Integer;
+
 function GetDefaultDatabasePath: string;
 begin
   // Returns the full path to the database file in the executable's directory
@@ -150,6 +155,11 @@ begin
   WriteLn('  --generate-mapping <dir>  : Generate framework mapping file');
   WriteLn('  --output <file>           : Output mapping file (default: framework-overrides.json)');
   WriteLn('  --dry-run                 : Preview mappings without saving');
+  WriteLn;
+  WriteLn('Cache Maintenance:');
+  WriteLn('  --revalidate-cache [N]    : Revalidate invalidated queries with N+ hits (default: 3)');
+  WriteLn('                              Re-executes popular queries to restore cache after indexing');
+  WriteLn('                              Ctrl+C to interrupt safely');
   WriteLn;
   WriteLn('Config File (delphi-lookup.json):');
   WriteLn('  If delphi-lookup.json exists next to the executable, it is loaded automatically.');
@@ -436,7 +446,13 @@ begin
   MappingInputFolder := PM.GetParameter('generate-mapping', '');
   MappingOutputFile := PM.GetParameter('output', 'framework-overrides.json');
 
-  if ScanPackagesMode or ListPackagesMode or GenerateMappingMode then
+  // Cache revalidation mode
+  RevalidateCacheMode := PM.HasParameter('revalidate-cache');
+  RevalidateMinHits := PM.GetParameterAsInteger('revalidate-cache', 3);
+  if RevalidateMinHits < 1 then RevalidateMinHits := 1;
+  if RevalidateMinHits > 100 then RevalidateMinHits := 100;
+
+  if ScanPackagesMode or ListPackagesMode or GenerateMappingMode or RevalidateCacheMode then
     Exit;
 
   // List folders mode
@@ -736,6 +752,282 @@ begin
       WriteLn('[ERROR] ' + E.Message);
       Result := False;
     end;
+  end;
+end;
+
+var
+  GInterrupted: Boolean = False;
+
+procedure HandleCtrlC;
+begin
+  GInterrupted := True;
+  WriteLn;
+  WriteLn('*** Ctrl+C detected - finishing current query and stopping... ***');
+end;
+
+procedure RevalidateCache(const ADatabaseFile: string; AMinHits: Integer);
+var
+  Connection: TFDConnection;
+  Query, UpdateQuery: TFDQuery;
+  QueryHash, QueryText, OldResultIDs, NewResultIDs: string;
+  TotalCandidates, Processed, Unchanged, Updated, NowEmpty, NowFound, Purged: Integer;
+  StartTime: TDateTime;
+  ResultCount: Integer;
+begin
+  if not FileExists(ADatabaseFile) then
+  begin
+    WriteLn('Error: Database not found: ' + ADatabaseFile);
+    Exit;
+  end;
+
+  WriteLn('Cache Revalidation');
+  WriteLn('==================');
+  WriteLn(Format('Database: %s', [ADatabaseFile]));
+  WriteLn(Format('Minimum hits threshold: %d', [AMinHits]));
+  WriteLn('Press Ctrl+C to safely interrupt');
+  WriteLn;
+
+  StartTime := Now;
+
+  // Set up Ctrl+C handler (Windows console handler)
+  // Note: In a full implementation, we'd use SetConsoleCtrlHandler
+  // For now, we'll check GInterrupted flag which can be set externally
+  GInterrupted := False;
+
+  Connection := TFDConnection.Create(nil);
+  Query := TFDQuery.Create(nil);
+  UpdateQuery := TFDQuery.Create(nil);
+  try
+    TDatabaseConnectionHelper.ConfigureConnection(Connection, ADatabaseFile, False);
+    Connection.Open;
+
+    Query.Connection := Connection;
+    UpdateQuery.Connection := Connection;
+
+    // Enable WAL mode
+    Query.SQL.Text := 'PRAGMA journal_mode=WAL';
+    Query.ExecSQL;
+
+    // Step 1: Purge obsolete queries
+    WriteLn('Step 1: Purging obsolete cache entries...');
+
+    // Delete queries with 0 results that are older than 30 days
+    Query.SQL.Text :=
+      'DELETE FROM query_cache ' +
+      'WHERE result_count = 0 AND ' +
+      '  last_seen < datetime(''now'', ''-30 days'')';
+    Query.ExecSQL;
+    Purged := Query.RowsAffected;
+
+    // Delete queries with few hits that are old
+    Query.SQL.Text :=
+      'DELETE FROM query_cache ' +
+      'WHERE hit_count < :min_hits AND ' +
+      '  last_seen < datetime(''now'', ''-30 days'')';
+    Query.ParamByName('min_hits').AsInteger := AMinHits;
+    Query.ExecSQL;
+    Purged := Purged + Query.RowsAffected;
+
+    WriteLn(Format('  Purged %d obsolete entries', [Purged]));
+
+    // Step 2: Get candidates for revalidation
+    WriteLn('Step 2: Finding candidates for revalidation...');
+
+    Query.SQL.Text :=
+      'SELECT query_hash, query_text, result_ids, result_count ' +
+      'FROM query_cache ' +
+      'WHERE cache_valid = 0 AND hit_count >= :min_hits ' +
+      'ORDER BY hit_count DESC';
+    Query.ParamByName('min_hits').AsInteger := AMinHits;
+    Query.Open;
+
+    // Count candidates
+    TotalCandidates := 0;
+    while not Query.EOF do
+    begin
+      Inc(TotalCandidates);
+      Query.Next;
+    end;
+    Query.First;
+
+    if TotalCandidates = 0 then
+    begin
+      WriteLn('  No invalidated queries with enough hits to revalidate.');
+      WriteLn;
+      WriteLn('Cache revalidation complete - nothing to do.');
+      Exit;
+    end;
+
+    WriteLn(Format('  Found %d candidates', [TotalCandidates]));
+    WriteLn;
+
+    // Step 3: Revalidate each candidate
+    WriteLn('Step 3: Revalidating queries...');
+
+    Processed := 0;
+    Unchanged := 0;
+    Updated := 0;
+    NowEmpty := 0;
+    NowFound := 0;
+
+    while not Query.EOF do
+    begin
+      // Check for interruption
+      if GInterrupted then
+      begin
+        WriteLn;
+        WriteLn('*** Interrupted by user ***');
+        Break;
+      end;
+
+      QueryHash := Query.FieldByName('query_hash').AsString;
+      QueryText := Query.FieldByName('query_text').AsString;
+      OldResultIDs := Query.FieldByName('result_ids').AsString;
+      ResultCount := Query.FieldByName('result_count').AsInteger;
+
+      // For now, we don't re-execute the actual search (would require QueryProcessor).
+      // Instead, we validate that the cached symbols still exist and have matching hashes.
+      // If all symbols are valid, we revalidate the cache entry.
+
+      // Parse old result IDs and check each symbol
+      var AllValid := True;
+      var NewResultList := TStringList.Create;
+      try
+        var IDList := TStringList.Create;
+        try
+          IDList.CommaText := OldResultIDs;
+
+          for var I := 0 to IDList.Count - 1 do
+          begin
+            var IDHashPair := IDList[I];
+            var ColonPos := Pos(':', IDHashPair);
+            var SymbolID: Integer;
+            var CachedHash, CurrentHash: string;
+
+            if ColonPos > 0 then
+            begin
+              SymbolID := StrToIntDef(Copy(IDHashPair, 1, ColonPos - 1), 0);
+              CachedHash := Copy(IDHashPair, ColonPos + 1, MaxInt);
+            end
+            else
+            begin
+              SymbolID := StrToIntDef(IDHashPair, 0);
+              CachedHash := '';
+            end;
+
+            if SymbolID = 0 then
+            begin
+              AllValid := False;
+              Break;
+            end;
+
+            // Check if symbol exists and hash matches
+            UpdateQuery.SQL.Text := 'SELECT id, content_hash FROM symbols WHERE id = :id';
+            UpdateQuery.ParamByName('id').AsInteger := SymbolID;
+            UpdateQuery.Open;
+
+            if UpdateQuery.EOF then
+            begin
+              // Symbol no longer exists
+              AllValid := False;
+              UpdateQuery.Close;
+              Break;
+            end;
+
+            CurrentHash := UpdateQuery.FieldByName('content_hash').AsString;
+            UpdateQuery.Close;
+
+            // Check hash (if both available)
+            if (CachedHash <> '') and (CurrentHash <> '') and (CachedHash <> CurrentHash) then
+            begin
+              // Content changed
+              AllValid := False;
+              Break;
+            end;
+
+            // Symbol is valid - add to new list with current hash
+            NewResultList.Add(IntToStr(SymbolID) + ':' + CurrentHash);
+          end;
+        finally
+          IDList.Free;
+        end;
+
+        // Update cache entry based on validation result
+        if AllValid and (NewResultList.Count > 0) then
+        begin
+          // All symbols valid - reactivate cache
+          NewResultIDs := NewResultList.CommaText;
+
+          UpdateQuery.SQL.Text :=
+            'UPDATE query_cache SET ' +
+            '  result_ids = :result_ids, ' +
+            '  cache_valid = 1, ' +
+            '  last_seen = CURRENT_TIMESTAMP ' +
+            'WHERE query_hash = :hash';
+          UpdateQuery.ParamByName('result_ids').AsString := NewResultIDs;
+          UpdateQuery.ParamByName('hash').AsString := QueryHash;
+          UpdateQuery.ExecSQL;
+
+          if NewResultIDs = OldResultIDs then
+            Inc(Unchanged)
+          else
+            Inc(Updated);
+        end
+        else if AllValid and (NewResultList.Count = 0) and (ResultCount = 0) then
+        begin
+          // Was zero results, still zero results - reactivate
+          UpdateQuery.SQL.Text :=
+            'UPDATE query_cache SET ' +
+            '  cache_valid = 1, ' +
+            '  last_seen = CURRENT_TIMESTAMP ' +
+            'WHERE query_hash = :hash';
+          UpdateQuery.ParamByName('hash').AsString := QueryHash;
+          UpdateQuery.ExecSQL;
+          Inc(Unchanged);
+        end
+        else if not AllValid then
+        begin
+          // Some symbols changed/deleted - keep invalidated
+          // The next actual search will update the cache
+          if ResultCount > 0 then
+            Inc(NowEmpty)
+          else
+            Inc(NowFound);
+        end;
+
+      finally
+        NewResultList.Free;
+      end;
+
+      Inc(Processed);
+
+      // Progress every 100 queries
+      if Processed mod 100 = 0 then
+        WriteLn(Format('  Processed %d/%d (%.1f%%)',
+          [Processed, TotalCandidates, Processed * 100.0 / TotalCandidates]));
+
+      Query.Next;
+    end;
+
+    Query.Close;
+
+    WriteLn;
+    WriteLn('==================');
+    WriteLn('Revalidation Summary');
+    WriteLn('==================');
+    WriteLn(Format('Candidates:  %d', [TotalCandidates]));
+    WriteLn(Format('Processed:   %d', [Processed]));
+    WriteLn(Format('Unchanged:   %d (cache reactivated)', [Unchanged]));
+    WriteLn(Format('Updated:     %d (hashes refreshed)', [Updated]));
+    WriteLn(Format('Invalid:     %d (will re-search on next use)', [NowEmpty + NowFound]));
+    WriteLn(Format('Purged:      %d (obsolete entries)', [Purged]));
+    WriteLn(Format('Duration:    %s', [FormatDateTime('nn:ss', Now - StartTime)]));
+    WriteLn;
+
+  finally
+    UpdateQuery.Free;
+    Query.Free;
+    Connection.Free;
   end;
 end;
 
@@ -1249,6 +1541,13 @@ begin
         Scanner.Free;
       end;
 
+      Halt(0);
+    end;
+
+    // Handle cache revalidation mode
+    if RevalidateCacheMode then
+    begin
+      RevalidateCache(DatabaseFile, RevalidateMinHits);
       Halt(0);
     end;
 

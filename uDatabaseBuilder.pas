@@ -104,6 +104,9 @@ type
     /// <summary>Check if a column exists in a table</summary>
     function ColumnExists(const ATable, AColumn: string): Boolean;
 
+    /// <summary>Migrate query_log data to query_cache table</summary>
+    procedure MigrateQueryLogToCache;
+
     /// <summary>Insert symbol with documentation fields (for CHM indexing)</summary>
     procedure InsertSymbol(const AName, AFullName, AType, AFilePath, AContent: string;
       const AComments, AParentClass: string; AEmbedding: TEmbedding;
@@ -335,6 +338,7 @@ begin
         deprecated_version TEXT,
         is_inherited INTEGER DEFAULT 0,
         inherited_from TEXT,
+        content_hash TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
         UNIQUE(name, file_path, type)
@@ -356,7 +360,7 @@ begin
       FQuery.ExecSQL;
     end;
     
-    // Create query logging table for usage analysis (also serves as cache)
+    // Create query logging table for usage analysis
     FQuery.SQL.Text := '''
       CREATE TABLE IF NOT EXISTS query_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -364,7 +368,7 @@ begin
         query_text TEXT NOT NULL,
         query_hash TEXT NOT NULL,
 
-        -- Cache fields (reuse log as cache!)
+        -- Cache fields (legacy - use query_cache instead)
         result_ids TEXT,
         cache_valid INTEGER DEFAULT 1,
 
@@ -400,6 +404,22 @@ begin
         fuzzy_results INTEGER DEFAULT 0,
         fts_results INTEGER DEFAULT 0,
         vector_results INTEGER DEFAULT 0
+      )
+    ''';
+    FQuery.ExecSQL;
+
+    // Create query cache table (one row per unique query, tracks popularity)
+    FQuery.SQL.Text := '''
+      CREATE TABLE IF NOT EXISTS query_cache (
+        query_hash TEXT PRIMARY KEY,
+        query_text TEXT NOT NULL,
+        result_ids TEXT,
+        result_count INTEGER NOT NULL,
+        cache_valid INTEGER DEFAULT 1,
+        hit_count INTEGER DEFAULT 1,
+        first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        avg_duration_ms INTEGER
       )
     ''';
     FQuery.ExecSQL;
@@ -545,6 +565,17 @@ begin
     FQuery.ExecSQL;
 
     FQuery.SQL.Text := 'CREATE INDEX IF NOT EXISTS idx_query_log_valid ON query_log(cache_valid)';
+    FQuery.ExecSQL;
+
+    // Symbol content hash index for cache validation
+    FQuery.SQL.Text := 'CREATE INDEX IF NOT EXISTS idx_symbols_id_hash ON symbols(id, content_hash)';
+    FQuery.ExecSQL;
+
+    // Query cache indexes
+    FQuery.SQL.Text := 'CREATE INDEX IF NOT EXISTS idx_query_cache_valid ON query_cache(cache_valid)';
+    FQuery.ExecSQL;
+
+    FQuery.SQL.Text := 'CREATE INDEX IF NOT EXISTS idx_query_cache_hits ON query_cache(hit_count DESC)';
     FQuery.ExecSQL;
 
     WriteLn('Database indexes created successfully');
@@ -876,18 +907,22 @@ procedure TDatabaseBuilder.InsertSymbol(const AName, AFullName, AType, AFilePath
   const AFramework, APlatforms, ADelphiVersion: string);
 var
   SymbolID: Integer;
+  ContentHash: string;
 begin
   try
+    // Calculate content hash for cache validation
+    ContentHash := THashMD5.GetHashString(AContent);
+
     // Insert symbol with documentation fields
     FQuery.SQL.Text := '''
       INSERT OR REPLACE INTO symbols (
         name, full_name, type, file_path, content, comments,
         parent_class, content_type, source_category,
-        framework, platforms, delphi_version
+        framework, platforms, delphi_version, content_hash
       ) VALUES (
         :name, :full_name, :type, :file_path, :content, :comments,
         :parent_class, :content_type, :source_category,
-        :framework, :platforms, :delphi_version
+        :framework, :platforms, :delphi_version, :content_hash
       )
     ''';
 
@@ -928,6 +963,9 @@ begin
       FQuery.ParamByName('delphi_version').DataType := ftString;
       FQuery.ParamByName('delphi_version').Clear;
     end;
+
+    // Set content hash for cache validation
+    FQuery.ParamByName('content_hash').AsString := ContentHash;
 
     FQuery.ExecSQL;
 
@@ -984,6 +1022,7 @@ var
   Framework: string;
   UnitName: string;
   FTSContent: string;
+  ContentHash: string;
   IsMethodType: Boolean;
 begin
   try
@@ -1013,6 +1052,9 @@ begin
     else
       FTSContent := AChunk.Content;
 
+    // Calculate content hash for cache validation (MD5 of full content)
+    ContentHash := THashMD5.GetHashString(AChunk.Content);
+
     // Use explicit framework if provided, otherwise auto-detect
     if FExplicitFramework <> '' then
       Framework := FExplicitFramework
@@ -1028,12 +1070,12 @@ begin
         name, full_name, type, file_path, content, enriched_text,
         spanish_terms, domain_tags, comments,
         parent_class, implemented_interfaces, visibility,
-        start_line, end_line, content_type, source_category, framework
+        start_line, end_line, content_type, source_category, framework, content_hash
       ) VALUES (
         :name, :full_name, :type, :file_path, :content, :enriched_text,
         :spanish_terms, :domain_tags, :comments,
         :parent_class, :implemented_interfaces, :visibility,
-        :start_line, :end_line, :content_type, :source_category, :framework
+        :start_line, :end_line, :content_type, :source_category, :framework, :content_hash
       )
     ''';
 
@@ -1063,6 +1105,9 @@ begin
       FQuery.ParamByName('framework').DataType := ftString;
       FQuery.ParamByName('framework').Clear;
     end;
+
+    // Set content hash for cache validation
+    FQuery.ParamByName('content_hash').AsString := ContentHash;
 
     FQuery.ExecSQL;
     
@@ -1519,6 +1564,8 @@ begin
 end;
 
 procedure TDatabaseBuilder.InvalidateQueryCache;
+var
+  CacheInvalidated, LogInvalidated: Integer;
 begin
   try
     if not FConnection.Connected then
@@ -1526,10 +1573,18 @@ begin
 
     WriteLn('Invalidating query cache...');
 
+    // Invalidate query_cache (new table)
+    FQuery.SQL.Text := 'UPDATE query_cache SET cache_valid = 0';
+    FQuery.ExecSQL;
+    CacheInvalidated := FQuery.RowsAffected;
+
+    // Also invalidate query_log for backwards compatibility
     FQuery.SQL.Text := 'UPDATE query_log SET cache_valid = 0';
     FQuery.ExecSQL;
+    LogInvalidated := FQuery.RowsAffected;
 
-    WriteLn(Format('Cache invalidated (%d entries marked invalid)', [FQuery.RowsAffected]));
+    WriteLn(Format('Cache invalidated (%d query_cache + %d query_log entries)',
+      [CacheInvalidated, LogInvalidated]));
 
   except
     on E: Exception do
@@ -1625,6 +1680,110 @@ begin
   end
   else
     WriteLn('Schema already migrated (framework column exists)');
+
+  // Migrate content_hash column (for cache validation)
+  if not ColumnExists('symbols', 'content_hash') then
+  begin
+    WriteLn('Adding content_hash column to symbols table...');
+    FQuery.SQL.Text := 'ALTER TABLE symbols ADD COLUMN content_hash TEXT';
+    FQuery.ExecSQL;
+    WriteLn('content_hash column added');
+  end;
+
+  // Create query_cache table if it doesn't exist
+  FQuery.SQL.Text := '''
+    CREATE TABLE IF NOT EXISTS query_cache (
+      query_hash TEXT PRIMARY KEY,
+      query_text TEXT NOT NULL,
+      result_ids TEXT,
+      result_count INTEGER NOT NULL,
+      cache_valid INTEGER DEFAULT 1,
+      hit_count INTEGER DEFAULT 1,
+      first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      avg_duration_ms INTEGER
+    )
+  ''';
+  FQuery.ExecSQL;
+
+  // Create query_cache indexes
+  FQuery.SQL.Text := 'CREATE INDEX IF NOT EXISTS idx_query_cache_valid ON query_cache(cache_valid)';
+  FQuery.ExecSQL;
+  FQuery.SQL.Text := 'CREATE INDEX IF NOT EXISTS idx_query_cache_hits ON query_cache(hit_count DESC)';
+  FQuery.ExecSQL;
+
+  // Migrate existing query_log data to query_cache (one-time migration)
+  MigrateQueryLogToCache;
+end;
+
+procedure TDatabaseBuilder.MigrateQueryLogToCache;
+var
+  MigratedCount: Integer;
+begin
+  try
+    // Check if query_cache is empty and query_log has data
+    FQuery.SQL.Text := 'SELECT COUNT(*) as cnt FROM query_cache';
+    FQuery.Open;
+    var CacheCount := FQuery.FieldByName('cnt').AsInteger;
+    FQuery.Close;
+
+    if CacheCount > 0 then
+    begin
+      WriteLn('query_cache already has data, skipping migration');
+      Exit;
+    end;
+
+    // Check if query_log has data to migrate
+    FQuery.SQL.Text := 'SELECT COUNT(*) as cnt FROM query_log WHERE cache_valid = 1';
+    FQuery.Open;
+    var LogCount := FQuery.FieldByName('cnt').AsInteger;
+    FQuery.Close;
+
+    if LogCount = 0 then
+    begin
+      WriteLn('No query_log data to migrate');
+      Exit;
+    end;
+
+    WriteLn(Format('Migrating %d query_log entries to query_cache...', [LogCount]));
+
+    // Migrate data: group by query_hash, count hits, get most recent result_ids
+    FQuery.SQL.Text := '''
+      INSERT INTO query_cache (query_hash, query_text, result_ids, result_count, cache_valid, hit_count, first_seen, last_seen, avg_duration_ms)
+      SELECT
+        query_hash,
+        MAX(query_text) as query_text,
+        (SELECT result_ids FROM query_log ql2 WHERE ql2.query_hash = query_log.query_hash ORDER BY executed_at DESC LIMIT 1) as result_ids,
+        MAX(result_count) as result_count,
+        1 as cache_valid,
+        COUNT(*) as hit_count,
+        MIN(executed_at) as first_seen,
+        MAX(executed_at) as last_seen,
+        AVG(duration_ms) as avg_duration_ms
+      FROM query_log
+      WHERE cache_valid = 1
+      GROUP BY query_hash
+    ''';
+    FQuery.ExecSQL;
+    MigratedCount := FQuery.RowsAffected;
+
+    WriteLn(Format('Migrated %d unique queries to query_cache', [MigratedCount]));
+
+  except
+    on E: Exception do
+    begin
+      WriteLn(Format('Migration failed: %s - clearing both tables and starting fresh', [E.Message]));
+      try
+        FQuery.SQL.Text := 'DELETE FROM query_cache';
+        FQuery.ExecSQL;
+        FQuery.SQL.Text := 'DELETE FROM query_log';
+        FQuery.ExecSQL;
+        WriteLn('Cache tables cleared - will rebuild on next use');
+      except
+        // Ignore cleanup errors
+      end;
+    end;
+  end;
 end;
 
 function TDatabaseBuilder.DetectFramework(const AFilePath, AUnitName: string): string;
