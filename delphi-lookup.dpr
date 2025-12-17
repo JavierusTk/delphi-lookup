@@ -568,9 +568,9 @@ begin
     Query.SQL.Text :=
       'SELECT ' +
       '  COUNT(*) as total, ' +
-      '  SUM(CASE WHEN result_count = 0 THEN 1 ELSE 0 END) as failed, ' +
-      '  SUM(CASE WHEN result_count > 0 THEN 1 ELSE 0 END) as successful, ' +
-      '  AVG(duration_ms) as avg_duration ' +
+      '  COALESCE(SUM(CASE WHEN result_count = 0 THEN 1 ELSE 0 END), 0) as failed, ' +
+      '  COALESCE(SUM(CASE WHEN result_count > 0 THEN 1 ELSE 0 END), 0) as successful, ' +
+      '  COALESCE(AVG(duration_ms), 0) as avg_duration ' +
       'FROM query_log';
     Query.Open;
 
@@ -618,9 +618,9 @@ begin
       Query.SQL.Text :=
         'SELECT ' +
         '  COUNT(*) as total, ' +
-        '  SUM(CASE WHEN cache_valid = 1 THEN 1 ELSE 0 END) as valid, ' +
-        '  SUM(hit_count) as total_hits, ' +
-        '  SUM(CASE WHEN hit_count >= 3 THEN 1 ELSE 0 END) as popular ' +
+        '  COALESCE(SUM(CASE WHEN cache_valid = 1 THEN 1 ELSE 0 END), 0) as valid, ' +
+        '  COALESCE(SUM(hit_count), 0) as total_hits, ' +
+        '  COALESCE(SUM(CASE WHEN hit_count >= 3 THEN 1 ELSE 0 END), 0) as popular ' +
         'FROM query_cache';
       Query.Open;
 
@@ -665,10 +665,21 @@ begin
     Connection.Open;
     Query.Connection := Connection;
 
-    // Delete all query_cache entries
-    Query.SQL.Text := 'DELETE FROM query_cache';
-    Query.ExecSQL;
-    CacheRowsAffected := Query.RowsAffected;
+    // Delete all query_cache entries (if table exists)
+    Query.SQL.Text := 'SELECT name FROM sqlite_master WHERE type=''table'' AND name=''query_cache''';
+    Query.Open;
+    if not Query.EOF then
+    begin
+      Query.Close;
+      Query.SQL.Text := 'DELETE FROM query_cache';
+      Query.ExecSQL;
+      CacheRowsAffected := Query.RowsAffected;
+    end
+    else
+    begin
+      Query.Close;
+      CacheRowsAffected := 0;
+    end;
 
     // Delete all query_log entries
     Query.SQL.Text := 'DELETE FROM query_log';
