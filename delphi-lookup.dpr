@@ -366,6 +366,7 @@ begin
   WriteLn;
   WriteLn('Analytics:');
   WriteLn('  --stats              : Show usage statistics');
+  WriteLn('  --clear-cache        : Clear query cache (invalidate all cached results)');
   WriteLn;
   WriteLn('Examples:');
   WriteLn('  delphi-lookup.exe "TStringList"');
@@ -437,6 +438,38 @@ begin
   end;
 end;
 
+procedure ClearCache(const ADatabaseFile: string);
+var
+  Connection: TFDConnection;
+  Query: TFDQuery;
+  RowsAffected: Integer;
+begin
+  if not FileExists(ADatabaseFile) then
+  begin
+    WriteLn('Error: Database not found: ' + ADatabaseFile);
+    Exit;
+  end;
+
+  Connection := TFDConnection.Create(nil);
+  Query := TFDQuery.Create(nil);
+  try
+    TDatabaseConnectionHelper.ConfigureConnection(Connection, ADatabaseFile, False);
+    Connection.Open;
+    Query.Connection := Connection;
+
+    // Delete all cache entries
+    Query.SQL.Text := 'DELETE FROM query_log';
+    Query.ExecSQL;
+    RowsAffected := Query.RowsAffected;
+
+    WriteLn(Format('Cache cleared: %d entries deleted', [RowsAffected]));
+
+  finally
+    Query.Free;
+    Connection.Free;
+  end;
+end;
+
 procedure InitializeParameterManager;
 begin
   PM := TParameterManager.Create;
@@ -500,6 +533,13 @@ begin
   if PM.HasParameter('stats') then
   begin
     ShowStats(DatabaseFile);
+    Exit;
+  end;
+
+  // Check for --clear-cache mode
+  if PM.HasParameter('clear-cache') then
+  begin
+    ClearCache(DatabaseFile);
     Exit;
   end;
 

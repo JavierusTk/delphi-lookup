@@ -6,6 +6,7 @@ All notable changes to delphi-lookup will be documented in this file.
 
 ### Added
 - `--stats` flag in delphi-lookup to show usage statistics (total queries, failure rate, avg duration)
+- `--clear-cache` flag in delphi-lookup to delete all cached queries
 - Cache preservation when no changes: `FinalizeFolder` no longer invalidates cache if no files were modified
 - Realistic search examples documentation (`docs/HELP-SEARCH-EXAMPLES.md`)
 
