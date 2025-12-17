@@ -85,8 +85,9 @@ type
     procedure CommitAndContinue;
 
     /// <summary>Finalize folder indexing (update indexed_folders, final commit)</summary>
+    /// <param name="AFilesModified">Number of files actually modified (0 = skip cache invalidation)</param>
     procedure FinalizeFolder(const AFolderPath: string; AFilesCount, AChunksCount: Integer;
-      AStartTime: TDateTime);
+      AStartTime: TDateTime; AFilesModified: Integer);
 
     /// <summary>Get the database connection (for shared access)</summary>
     property Connection: TFDConnection read FConnection;
@@ -1792,7 +1793,7 @@ begin
 end;
 
 procedure TDatabaseBuilder.FinalizeFolder(const AFolderPath: string;
-  AFilesCount, AChunksCount: Integer; AStartTime: TDateTime);
+  AFilesCount, AChunksCount: Integer; AStartTime: TDateTime; AFilesModified: Integer);
 var
   EndTime: TDateTime;
 begin
@@ -1804,8 +1805,11 @@ begin
   // Record folder indexing
   RecordFolderIndexing(AFolderPath, AStartTime, EndTime, AFilesCount, AChunksCount);
 
-  // Invalidate query cache
-  InvalidateQueryCache;
+  // Only invalidate query cache if files were actually modified
+  if AFilesModified > 0 then
+    InvalidateQueryCache
+  else
+    WriteLn('  No files modified - query cache preserved');
 
   // Final commit
   FConnection.Commit;

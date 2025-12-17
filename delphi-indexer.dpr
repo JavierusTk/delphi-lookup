@@ -1183,8 +1183,8 @@ begin
       PendingFiles.Clear;
     end;
 
-    // Finalize folder
-    DatabaseBuilder.FinalizeFolder(FolderPath, FilesProcessed, TotalChunks, StartTime);
+    // Finalize folder (pass FilesProcessed as modified count - if 0, cache won't be invalidated)
+    DatabaseBuilder.FinalizeFolder(FolderPath, FilesProcessed, TotalChunks, StartTime, FilesProcessed);
 
     TotalStopwatch.Stop;
 

@@ -364,11 +364,77 @@ begin
   WriteLn('  If delphi-lookup.json exists next to the executable, it is loaded automatically.');
   WriteLn('  Command line options override config file values.');
   WriteLn;
+  WriteLn('Analytics:');
+  WriteLn('  --stats              : Show usage statistics');
+  WriteLn;
   WriteLn('Examples:');
   WriteLn('  delphi-lookup.exe "TStringList"');
   WriteLn('  delphi-lookup.exe "JSON serialization" -n 10');
   WriteLn('  delphi-lookup.exe "TForm" --category user --framework VCL');
   WriteLn('  delphi-lookup.exe "validation" --use-reranker --candidates 100');
+  WriteLn('  delphi-lookup.exe --stats');
+end;
+
+procedure ShowStats(const ADatabaseFile: string);
+var
+  Connection: TFDConnection;
+  Query: TFDQuery;
+  TotalQueries, FailedQueries, SuccessfulQueries: Integer;
+  FailedPercent, SuccessPercent: Double;
+  AvgDuration: Double;
+begin
+  if not FileExists(ADatabaseFile) then
+  begin
+    WriteLn('Error: Database not found: ' + ADatabaseFile);
+    Exit;
+  end;
+
+  Connection := TFDConnection.Create(nil);
+  Query := TFDQuery.Create(nil);
+  try
+    TDatabaseConnectionHelper.ConfigureConnection(Connection, ADatabaseFile, False);
+    Connection.Open;
+    Query.Connection := Connection;
+
+    // Get statistics
+    Query.SQL.Text :=
+      'SELECT ' +
+      '  COUNT(*) as total, ' +
+      '  SUM(CASE WHEN result_count = 0 THEN 1 ELSE 0 END) as failed, ' +
+      '  SUM(CASE WHEN result_count > 0 THEN 1 ELSE 0 END) as successful, ' +
+      '  AVG(duration_ms) as avg_duration ' +
+      'FROM query_log';
+    Query.Open;
+
+    TotalQueries := Query.FieldByName('total').AsInteger;
+    FailedQueries := Query.FieldByName('failed').AsInteger;
+    SuccessfulQueries := Query.FieldByName('successful').AsInteger;
+    AvgDuration := Query.FieldByName('avg_duration').AsFloat;
+
+    if TotalQueries > 0 then
+    begin
+      FailedPercent := (FailedQueries / TotalQueries) * 100;
+      SuccessPercent := (SuccessfulQueries / TotalQueries) * 100;
+    end
+    else
+    begin
+      FailedPercent := 0;
+      SuccessPercent := 0;
+    end;
+
+    WriteLn;
+    WriteLn('Usage Statistics');
+    WriteLn('================');
+    WriteLn(Format('Total queries:      %d', [TotalQueries]));
+    WriteLn(Format('Failed (0 results): %d (%.1f%%)', [FailedQueries, FailedPercent]));
+    WriteLn(Format('Successful:         %d (%.1f%%)', [SuccessfulQueries, SuccessPercent]));
+    WriteLn(Format('Avg duration:       %.0f ms', [AvgDuration]));
+    WriteLn;
+
+  finally
+    Query.Free;
+    Connection.Free;
+  end;
 end;
 
 procedure InitializeParameterManager;
@@ -429,6 +495,13 @@ begin
   DatabaseFile := PM.GetParameter('database', PM.GetParameter('d', GetDefaultDatabasePath));
   if not TPath.IsPathRooted(DatabaseFile) then
     DatabaseFile := TPath.Combine(ExtractFilePath(ParamStr(0)), DatabaseFile);
+
+  // Check for --stats mode
+  if PM.HasParameter('stats') then
+  begin
+    ShowStats(DatabaseFile);
+    Exit;
+  end;
 
   // Search options
   NumResults := PM.GetParameterAsInteger('num-results',
