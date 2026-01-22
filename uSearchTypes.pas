@@ -113,38 +113,60 @@ end;
 
 procedure TSearchResultList.RemoveDuplicates;
 var
-  I, J: Integer;
-  ItemsToDelete: TList<Integer>;
-  DeleteIndex: Integer;
+  Seen: TDictionary<Integer, TSearchResult>;
+  Current, Existing: TSearchResult;
+  I: Integer;
+  OldOwnsObjects: Boolean;
+  ResultList: TList<TSearchResult>;
 begin
-  // Use a safer approach: collect indices to delete, then delete in reverse order
-  ItemsToDelete := TList<Integer>.Create;
+  // Optimized O(n) algorithm using TDictionary instead of O(n²) nested loops
+  Seen := TDictionary<Integer, TSearchResult>.Create;
+  ResultList := TList<TSearchResult>.Create;
   try
+    // First pass: identify unique items, keeping best score for each SymbolID
     for I := 0 to Count - 1 do
     begin
-      for J := I + 1 to Count - 1 do
+      Current := Items[I];
+
+      if Seen.TryGetValue(Current.SymbolID, Existing) then
       begin
-        if (Items[I].SymbolID = Items[J].SymbolID) and (ItemsToDelete.IndexOf(I) = -1) and (ItemsToDelete.IndexOf(J) = -1) then
+        // Duplicate found: keep the one with higher score or exact match
+        if Current.IsExactMatch or (Current.Score > Existing.Score) then
         begin
-          // Keep the one with higher score or exact match
-          if Items[I].IsExactMatch or (Items[I].Score >= Items[J].Score) then
-            ItemsToDelete.Add(J)
-          else
-            ItemsToDelete.Add(I);
+          // Current is better - replace in dictionary and free old one
+          Seen[Current.SymbolID] := Current;
+          Existing.Free;
+        end
+        else
+        begin
+          // Existing is better - free current
+          Current.Free;
         end;
+      end
+      else
+      begin
+        // New SymbolID - add to dictionary
+        Seen.Add(Current.SymbolID, Current);
       end;
     end;
-    
-    // Sort deletion indices in ascending order, then delete from high to low
-    ItemsToDelete.Sort;
-    for DeleteIndex := ItemsToDelete.Count - 1 downto 0 do
-    begin
-      if (ItemsToDelete[DeleteIndex] >= 0) and (ItemsToDelete[DeleteIndex] < Count) then
-        Delete(ItemsToDelete[DeleteIndex]);
-    end;
-    
+
+    // Collect surviving items
+    for Current in Seen.Values do
+      ResultList.Add(Current);
+
+    // Rebuild the list without freeing objects (we already handled that)
+    OldOwnsObjects := OwnsObjects;
+    OwnsObjects := False;
+    Clear;
+    OwnsObjects := OldOwnsObjects;
+
+    // Add back the deduplicated items
+    for Current in ResultList do
+      Add(Current);
+
   finally
-    ItemsToDelete.Free;
+    ResultList.Free;
+    Seen.Free;
   end;
 end;
 

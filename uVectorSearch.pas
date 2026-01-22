@@ -16,6 +16,9 @@ uses
   uDatabaseConnection;
 
 type
+  /// <summary>Type of distance function used for vector similarity</summary>
+  TDistanceFunction = (dfL2, dfCosine);
+
   TVectorSearch = class
   private
     FConnection: TFDConnection;
@@ -26,10 +29,15 @@ type
     FOllamaURL: string;
     FOllamaModel: string;
     FEmbeddingDimensions: Integer;
+    FDistanceFunction: TDistanceFunction;
 
-    function CreateSearchResultFromQuery: TSearchResult;
+    function CreateSearchResultFromQuery(ADistance: Double): TSearchResult;
     procedure LoadExtension;
     function ReadMetadata(const AKey: string): string;
+    procedure ReadAllMetadata(out AModel, ADimensions, AOllamaURL: string);
+    function DetectDistanceFunction: TDistanceFunction;
+    function DistanceToScore(ADistance: Double): Double;
+    function GetDistanceFunctionSQL: string;
 
   public
     constructor Create; overload;
@@ -42,13 +50,44 @@ type
     property IsInitialized: Boolean read FIsInitialized;
     property EmbeddingModel: string read FOllamaModel;
     property EmbeddingDimensions: Integer read FEmbeddingDimensions;
+    property DistanceFunction: TDistanceFunction read FDistanceFunction;
   end;
+
+/// <summary>Convert vector to JSON array string efficiently using TStringBuilder</summary>
+function VectorToJSON(const AVector: TArray<Single>): string;
 
 implementation
 
 uses
   System.IOUtils,
+  System.Text,
   FireDAC.Stan.Param;
+
+var
+  /// <summary>Global US format settings for consistent decimal separator</summary>
+  GUSFormat: TFormatSettings;
+
+function VectorToJSON(const AVector: TArray<Single>): string;
+var
+  Builder: TStringBuilder;
+  I: Integer;
+begin
+  // Pre-allocate approximate size: 1536 dims * ~15 chars per float
+  Builder := TStringBuilder.Create(Length(AVector) * 16);
+  try
+    Builder.Append('[');
+    for I := 0 to High(AVector) do
+    begin
+      if I > 0 then
+        Builder.Append(',');
+      Builder.Append(FloatToStr(AVector[I], GUSFormat));
+    end;
+    Builder.Append(']');
+    Result := Builder.ToString;
+  finally
+    Builder.Free;
+  end;
+end;
 
 { TVectorSearch }
 
@@ -117,7 +156,101 @@ begin
   end;
 end;
 
+procedure TVectorSearch.ReadAllMetadata(out AModel, ADimensions, AOllamaURL: string);
+begin
+  // Consolidate 3 queries into 1 for better performance
+  AModel := '';
+  ADimensions := '';
+  AOllamaURL := '';
+
+  FQuery.SQL.Text := 'SELECT key, value FROM metadata WHERE key IN ' +
+    '(''embedding_model'', ''embedding_dimensions'', ''ollama_url'', ''embedding_url'')';
+  FQuery.Open;
+  try
+    while not FQuery.EOF do
+    begin
+      var Key := FQuery.FieldByName('key').AsString;
+      var Value := FQuery.FieldByName('value').AsString;
+
+      if Key = 'embedding_model' then
+        AModel := Value
+      else if Key = 'embedding_dimensions' then
+        ADimensions := Value
+      else if (Key = 'ollama_url') or (Key = 'embedding_url') then
+      begin
+        if AOllamaURL = '' then  // ollama_url takes precedence
+          AOllamaURL := Value;
+      end;
+
+      FQuery.Next;
+    end;
+  finally
+    FQuery.Close;
+  end;
+end;
+
+function TVectorSearch.DetectDistanceFunction: TDistanceFunction;
+begin
+  // Try vec_distance_cosine first (better for normalized embeddings)
+  try
+    FQuery.SQL.Text := 'SELECT vec_distance_cosine(''[1,0]'', ''[0,1]'') as dist';
+    FQuery.Open;
+    FQuery.Close;
+    Result := dfCosine;
+    WriteLn('Using cosine distance (optimal for normalized embeddings)');
+  except
+    // Fallback to L2 if cosine not supported
+    Result := dfL2;
+    WriteLn('Using L2 distance (cosine not available in this sqlite-vec version)');
+  end;
+end;
+
+function TVectorSearch.GetDistanceFunctionSQL: string;
+begin
+  case FDistanceFunction of
+    dfCosine: Result := 'vec_distance_cosine';
+    dfL2: Result := 'vec_distance_L2';
+  else
+    Result := 'vec_distance_L2';
+  end;
+end;
+
+function TVectorSearch.DistanceToScore(ADistance: Double): Double;
+begin
+  // Convert distance to similarity score in range [0, 1]
+  case FDistanceFunction of
+    dfCosine:
+      begin
+        // vec_distance_cosine returns 1 - cosine_similarity
+        // Range: [0, 2] where 0 = identical, 2 = opposite
+        // Convert to score: 1.0 - (distance / 2.0)
+        Result := 1.0 - (ADistance / 2.0);
+      end;
+
+    dfL2:
+      begin
+        // L2 distance for normalized vectors
+        // Range: [0, 2] where 0 = identical
+        // Use exponential decay for smooth scoring
+        Result := Exp(-ADistance);
+
+        // Alternative: Convert L2 to cosine for normalized vectors
+        // CosineSim := 1.0 - (ADistance * ADistance / 2.0);
+        // Result := (CosineSim + 1.0) / 2.0;
+      end;
+
+  else
+    // Safe fallback
+    Result := Exp(-ADistance);
+  end;
+
+  // Ensure result is in [0, 1]
+  Result := Max(0.0, Min(1.0, Result));
+end;
+
 procedure TVectorSearch.Initialize(const ADatabaseFile: string; const AOllamaURL: string = '');
+var
+  ModelStr, DimensionsStr, MetadataURL: string;
 begin
   try
     // If we own the connection, configure and open it
@@ -130,34 +263,32 @@ begin
       LoadExtension;
     end;
 
-    // Read model configuration from database metadata
-    FOllamaModel := ReadMetadata('embedding_model');
-    if FOllamaModel = '' then
-      raise Exception.Create('Database metadata missing: embedding_model');
+    // Read all metadata in a single query (optimization)
+    ReadAllMetadata(ModelStr, DimensionsStr, MetadataURL);
 
+    // Validate required metadata
+    if ModelStr = '' then
+      raise Exception.Create('Database metadata missing: embedding_model');
+    FOllamaModel := ModelStr;
     WriteLn(Format('Database indexed with model: %s', [FOllamaModel]));
 
-    // Read embedding dimensions from metadata
-    var DimensionsStr := ReadMetadata('embedding_dimensions');
     if DimensionsStr = '' then
       raise Exception.Create('Database metadata missing: embedding_dimensions');
-
     FEmbeddingDimensions := StrToInt(DimensionsStr);
     WriteLn(Format('Database embedding dimensions: %d', [FEmbeddingDimensions]));
 
-    // Use Ollama URL from parameter or metadata (parameter takes precedence)
+    // Use Ollama URL from parameter, metadata, or environment (in order of precedence)
     if AOllamaURL <> '' then
       FOllamaURL := AOllamaURL
+    else if MetadataURL <> '' then
+      FOllamaURL := MetadataURL
     else
-    begin
-      FOllamaURL := ReadMetadata('ollama_url');
-      if FOllamaURL = '' then
-        FOllamaURL := ReadMetadata('embedding_url'); // Try new name
-      if FOllamaURL = '' then
-        FOllamaURL := GetEmbeddingURLFromEnv; // Fallback to environment variable
-    end;
+      FOllamaURL := GetEmbeddingURLFromEnv;
 
     WriteLn(Format('Using Ollama server: %s', [FOllamaURL]));
+
+    // Detect best distance function (cosine preferred for normalized embeddings)
+    FDistanceFunction := DetectDistanceFunction;
 
     // Initialize Ollama embedding generator with model from database
     FEmbeddingGenerator := TOllamaEmbeddingGenerator.Create(FOllamaURL, FOllamaModel);
@@ -174,7 +305,7 @@ begin
   end;
 end;
 
-function TVectorSearch.CreateSearchResultFromQuery: TSearchResult;
+function TVectorSearch.CreateSearchResultFromQuery(ADistance: Double): TSearchResult;
 begin
   Result := TSearchResult.Create;
 
@@ -191,14 +322,8 @@ begin
   Result.ContentType := FQuery.FieldByName('content_type').AsString;
   Result.SourceCategory := FQuery.FieldByName('source_category').AsString;
 
-  // Distance field for vector similarity
-  if not FQuery.FieldByName('distance').IsNull then
-  begin
-    var Distance := FQuery.FieldByName('distance').AsFloat;
-    Result.Score := 1.0 - Distance; // Convert distance to similarity
-  end
-  else
-    Result.Score := 0.0;
+  // Convert distance to score using proper formula
+  Result.Score := DistanceToScore(ADistance);
 
   Result.IsExactMatch := False;
   Result.MatchType := 'vector_similarity';
@@ -208,9 +333,10 @@ function TVectorSearch.SearchSimilar(const AQuery: string; AMaxResults: Integer;
 var
   QueryEmbedding: TEmbedding;
   VectorJSON: string;
-  I: Integer;
   SearchResult: TSearchResult;
-  MinSimilarity: Double;
+  MinScore: Double;
+  Distance: Double;
+  DistFunc: string;
 begin
   Result := TSearchResultList.Create;
 
@@ -220,9 +346,9 @@ begin
     Exit;
   end;
 
-  // Convert max distance to minimum similarity score
-  MinSimilarity := 1.0 - AMaxDistance;
-  WriteLn(Format('Vector search: max_distance=%.2f (min_similarity=%.2f)', [AMaxDistance, MinSimilarity]));
+  // Convert max distance to minimum score using proper formula
+  MinScore := DistanceToScore(AMaxDistance);
+  WriteLn(Format('Vector search: max_distance=%.2f (min_score=%.2f)', [AMaxDistance, MinScore]));
 
   try
     WriteLn(Format('Generating embedding for query: "%s"', [AQuery]));
@@ -245,26 +371,13 @@ begin
         Exit;
       end;
 
-      // Convert vector to JSON array string
-      // IMPORTANT: Use US format settings to ensure period as decimal separator
-      var USFormat: TFormatSettings := TFormatSettings.Create('en-US');
-      VectorJSON := '[';
-      for I := 0 to Length(QueryEmbedding.Vector) - 1 do
-      begin
-        if I > 0 then
-          VectorJSON := VectorJSON + ',';
-        VectorJSON := VectorJSON + FloatToStr(QueryEmbedding.Vector[I], USFormat);
-      end;
-      VectorJSON := VectorJSON + ']';
+      // Convert vector to JSON array string efficiently
+      VectorJSON := VectorToJSON(QueryEmbedding.Vector);
+
+      // Get the appropriate distance function
+      DistFunc := GetDistanceFunctionSQL;
 
       // Perform vector similarity search using sqlite-vec
-      // vec_distance_L2 is the L2 (Euclidean) distance function from sqlite-vec
-      // Debug: Check how many vectors are in the database (DISABLED - too verbose)
-      // FQuery.SQL.Text := 'SELECT COUNT(*) as vec_count FROM vec_embeddings';
-      // FQuery.Open;
-      // WriteLn(Format('[DEBUG-VEC-SEARCH] Total vectors in database: %d', [FQuery.FieldByName('vec_count').AsInteger]));
-      // FQuery.Close;
-
       FQuery.SQL.Text := Format('''
         SELECT
           v.symbol_id,
@@ -279,24 +392,23 @@ begin
           s.visibility,
           s.content_type,
           s.source_category,
-          vec_distance_L2(v.embedding, %s) as distance
+          %s(v.embedding, %s) as distance
         FROM vec_embeddings v
         JOIN symbols s ON v.symbol_id = s.id
         WHERE v.embedding MATCH %s
           AND k = %d
         ORDER BY distance
-      ''', [QuotedStr(VectorJSON), QuotedStr(VectorJSON), AMaxResults]);
+      ''', [DistFunc, QuotedStr(VectorJSON), QuotedStr(VectorJSON), AMaxResults * 2]);
 
-      // WriteLn('[DEBUG-VEC-SEARCH] Executing vector search query with k=', AMaxResults);
       FQuery.Open;
-      // WriteLn(Format('[DEBUG-VEC-SEARCH] Query returned %d rows (before similarity filtering)', [FQuery.RecordCount]));
 
       while not FQuery.EOF do
       begin
-        SearchResult := CreateSearchResultFromQuery;
+        Distance := FQuery.FieldByName('distance').AsFloat;
+        SearchResult := CreateSearchResultFromQuery(Distance);
 
-        // Apply minimum similarity threshold (based on max distance parameter)
-        if SearchResult.Score > MinSimilarity then
+        // Apply minimum score threshold
+        if SearchResult.Score >= MinScore then
           Result.Add(SearchResult)
         else
           SearchResult.Free;
@@ -306,7 +418,8 @@ begin
 
       FQuery.Close;
 
-      WriteLn(Format('Vector search returned %d results', [Result.Count]));
+      WriteLn(Format('Vector search returned %d results (filtered by min_score=%.2f)',
+        [Result.Count, MinScore]));
 
     finally
       QueryEmbedding.Free;
@@ -320,5 +433,9 @@ begin
     end;
   end;
 end;
+
+initialization
+  // Initialize global US format settings once at startup
+  GUSFormat := TFormatSettings.Create('en-US');
 
 end.
