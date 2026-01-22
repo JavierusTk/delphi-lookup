@@ -390,7 +390,10 @@ begin
 
   // Add file information
   if AResult.FilePath <> '' then
+  begin
     WriteLn(Format('// File: %s', [ExtractFileName(AResult.FilePath)]));
+    WriteLn(Format('// Unit: %s', [ChangeFileExt(ExtractFileName(AResult.FilePath), '')]));
+  end;
 
   // Add classification information
   if (AResult.ContentType <> '') or (AResult.SourceCategory <> '') then
