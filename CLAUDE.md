@@ -13,7 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Query caching: 1-3ms cache hits (100-2000x faster)
 - Incremental indexing: Only processes new/modified files
 
-> **Note on Vector/Semantic Search:** The codebase includes optional vector embeddings (via Ollama). Recommendation varies by user: **AI agents** should use FTS5-only (iterate fast, 10x lower latency), while **human developers on English codebases** benefit from vector search (higher single-shot precision, 4.5s latency acceptable). See "Vector Search Status" section for details.
+> **Note on Vector/Semantic Search:** The codebase includes optional vector embeddings (via Ollama), but **FTS5-only is recommended** for AI agent workflows. Agents iterate fast and can achieve similar quality with multiple specific searches while being 17x faster. See "Vector Search Status" section for benchmark results.
 
 ## Tools
 
@@ -313,50 +313,37 @@ For AI coding agents that iterate (like Claude Code with Explore Agent), FTS5-on
 
 ## Vector Search Status
 
-**Recommendation depends on who is searching:**
+**Target audience: AI Coding Agents**
 
-| User Type | Codebase Language | Recommendation |
-|-----------|-------------------|----------------|
-| AI Agent | Any | **FTS5-only** |
-| Human Developer | English | **Vector search enabled** |
-| Human Developer | Non-English | FTS5-only (or test first) |
+**Recommendation: FTS5-only mode** (no Ollama required)
 
-### For AI Coding Agents: FTS5-only
+Rationale:
+1. **Agents iterate** - Can do 2-3 fast searches and synthesize results, matching vector precision while being 17x faster
+2. **Claude Code's approach** - Anthropic tested RAG with Voyage embeddings and found "agentic search" (grep/glob with iteration) outperformed single-shot semantic search
+3. **Latency compounds** - In agentic workflows, 260ms per search adds up quickly across multiple tool calls
+4. **No operational overhead** - No need to run Ollama server
 
-AI agents should use FTS5-only mode (~400ms latency):
+### Benchmark Results (January 2026)
 
-1. **Agents iterate** - Can do 2-3 fast searches and synthesize results, matching vector precision while being 10x faster
-2. **Claude Code abandoned RAG** - Anthropic tested semantic search with Voyage embeddings and found "agentic search" (grep/glob with iteration) outperformed it
-3. **Latency matters** - Agents need sub-second responses to stay responsive
+| Mode | Exact Names | Conceptual | Latency |
+|------|-------------|------------|---------|
+| FTS5-only | 100% | 0% | ~15ms |
+| FTS5 + Embeddings | 100% | 100% | ~260ms |
 
-### For Human Developers on English Codebases: Vector Search Recommended
+**Key insight**: While embeddings dramatically improve conceptual queries (100% vs 0%), AI agents compensate by:
+- Using multiple specific searches instead of one conceptual search
+- Pattern: `"parse pascal code"` → `"Parser"` → `"ParseFile"` → precise results
 
-Human developers benefit from vector search (~4.5s latency):
+### Embedding Infrastructure
 
-1. **Single-shot precision matters** - Humans type one query and wait; 75-85% precision beats 35%
-2. **4.5s is acceptable** - Unlike agents, humans don't need sub-second responses
-3. **Full implementations indexed** - When embeddings enabled, method bodies (up to 8192 chars) are indexed, providing rich semantic content
-4. **Conceptual queries work** - "validate input before save" finds `BeforePost`, `ValidateFields`, etc.
-
-```json
-{
-  "embedding_url": "http://127.0.0.1:11434",
-  "semantic_search": true
-}
+The embedding code is **fully functional** and can be enabled if needed:
+```bash
+./delphi-lookup.exe "query" --semantic-search --embedding-url "http://host:11434"
 ```
 
-### Benchmark Results (December 2025)
+However, for AI agent workflows, the iteration-based approach with FTS5-only is preferred.
 
-| Mode | Precision@10 | Hit Rate@10 | Latency |
-|------|--------------|-------------|---------|
-| FTS5 only | 35% | 30% | ~400ms |
-| FTS5 + Vector | 64%* | 95% | ~4500ms |
-
-*Benchmark was on Spanish code. English codebases expected to achieve 75-85% precision due to better embedding model alignment.
-
-### Non-English Codebases
-
-Embedding models are trained predominantly on English. For non-English codebases (Spanish, etc.), effectiveness is reduced. Test on your codebase before committing to the operational overhead of running Ollama.
+See `BENCHMARK-embedding-quality.md` for detailed quality test results.
 
 ## Architecture
 
