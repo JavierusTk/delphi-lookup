@@ -106,6 +106,7 @@ type
     FMappingFile: string;
     FDatabaseFile: string;
     FDatabaseExisted: Boolean;  // Track if database existed before indexing
+    FDeferFTS5: Boolean;        // REQ-007: Defer FTS5 population for full reindex
 
     procedure CreateConnection(const ADatabaseFile: string; ALoadVec0: Boolean = True);
     procedure CreateTables;
@@ -128,6 +129,12 @@ type
     function GetFolderLastIndexed(const AFolderPath: string): TDateTime;
     procedure ValidateMetadata(const AOllamaModel: string; AEmbeddingDimensions: Integer);
     function GroupChunksByFile(AChunks: TCodeChunkList): TDictionary<string, TList<TCodeChunk>>;
+
+    // REQ-007: FTS5 management for deferred population
+    procedure InsertSymbolToFTS5(ASymbolID: Integer; const AName, AFullName, AContent, AComments: string);
+    procedure PopulateFTS5Bulk;
+    procedure DropFTS5Table;
+    procedure RecreateFTS5Table;
 
   public
     constructor Create;
@@ -432,6 +439,14 @@ begin
     FQuery.ExecSQL;
     WriteLn('WAL mode enabled');
 
+    // Reduce fsync calls for better performance (safe with WAL)
+    FQuery.SQL.Text := 'PRAGMA synchronous=NORMAL';
+    FQuery.ExecSQL;
+
+    // Increase page cache to 64MB for better performance (negative = KB)
+    FQuery.SQL.Text := 'PRAGMA cache_size=-64000';
+    FQuery.ExecSQL;
+
     // Load sqlite-vec extension (only needed for embeddings)
     if ALoadVec0 then
     begin
@@ -657,6 +672,26 @@ begin
     ''';
     FQuery.ExecSQL;
 
+    // Create FTS5 virtual table for full-text search (external content table)
+    // This is created once with IF NOT EXISTS - no rebuild needed on incremental indexing
+    // FTS5 triggers sync content automatically when symbols table is modified
+    try
+      FQuery.SQL.Text := '''
+        CREATE VIRTUAL TABLE IF NOT EXISTS symbols_fts USING fts5(
+          name, full_name, content, comments,
+          content='symbols', content_rowid='id'
+        )
+      ''';
+      FQuery.ExecSQL;
+      WriteLn('FTS5 virtual table created (or already exists)');
+    except
+      on E: Exception do
+      begin
+        WriteLn('Warning: FTS5 not available, full-text search will be disabled');
+        WriteLn(Format('FTS5 error: %s', [E.Message]));
+      end;
+    end;
+
     // Force WAL checkpoint to release locks before other connections attempt to access
     FQuery.SQL.Text := 'PRAGMA wal_checkpoint(TRUNCATE)';
     FQuery.ExecSQL;
@@ -714,40 +749,9 @@ begin
     FQuery.SQL.Text := 'CREATE INDEX IF NOT EXISTS idx_packages_by_scan_date ON packages(last_scanned)';
     FQuery.ExecSQL;
 
-    // Full-text search index on content and comments (optional - skip if FTS5 not available)
-    try
-      // Drop existing FTS5 table if it exists (to rebuild from scratch)
-      try
-        FQuery.SQL.Text := 'DROP TABLE IF EXISTS symbols_fts';
-        FQuery.ExecSQL;
-      except
-        // Ignore errors if table doesn't exist
-      end;
+    // Note: FTS5 virtual table is created in CreateTables with IF NOT EXISTS
+    // FTS5 content sync is handled by triggers when symbols are inserted/updated/deleted
 
-      // Create FTS5 virtual table
-      FQuery.SQL.Text := '''
-        CREATE VIRTUAL TABLE symbols_fts USING fts5(
-          name, full_name, content, comments,
-          content='symbols', content_rowid='id'
-        )
-      ''';
-      FQuery.ExecSQL;
-
-      // Populate FTS table with all symbols
-      FQuery.SQL.Text := '''
-        INSERT INTO symbols_fts(rowid, name, full_name, content, comments)
-        SELECT id, name, full_name, content, comments FROM symbols
-      ''';
-      FQuery.ExecSQL;
-      WriteLn('Full-text search index created successfully');
-    except
-      on E: Exception do
-      begin
-        WriteLn('Warning: FTS5 not available, skipping full-text search index');
-        WriteLn(Format('FTS5 error: %s', [E.Message]));
-      end;
-    end;
-    
     // Note: vec0 virtual tables don't support traditional indexes
     // Vector similarity search is handled internally by sqlite-vec
 
@@ -958,12 +962,7 @@ begin
     FQuery.ParamByName('file_path').AsString := AFilePath;
     FQuery.ExecSQL;
 
-    // Remove symbols
-    FQuery.SQL.Text := 'DELETE FROM symbols WHERE file_path = :file_path';
-    FQuery.ParamByName('file_path').AsString := AFilePath;
-    FQuery.ExecSQL;
-
-    // Remove FTS entries (if FTS is enabled)
+    // Remove FTS entries BEFORE symbols (subquery needs symbols table)
     try
       FQuery.SQL.Text := '''
         DELETE FROM symbols_fts
@@ -976,6 +975,11 @@ begin
     except
       // FTS5 might not be enabled, ignore errors
     end;
+
+    // Remove symbols (after FTS and embeddings are cleaned up)
+    FQuery.SQL.Text := 'DELETE FROM symbols WHERE file_path = :file_path';
+    FQuery.ParamByName('file_path').AsString := AFilePath;
+    FQuery.ExecSQL;
 
     // Remove hash entry
     FQuery.SQL.Text := 'DELETE FROM file_hashes WHERE file_path = :file_path';
@@ -1112,6 +1116,91 @@ begin
   end;
 end;
 
+{ REQ-007: FTS5 Management Methods }
+
+procedure TDatabaseBuilder.InsertSymbolToFTS5(ASymbolID: Integer;
+  const AName, AFullName, AContent, AComments: string);
+begin
+  // Skip if FTS5 population is deferred (will be done in bulk at end)
+  if FDeferFTS5 then
+    Exit;
+
+  try
+    FQuery.SQL.Text := '''
+      INSERT INTO symbols_fts(rowid, name, full_name, content, comments)
+      VALUES (:rowid, :name, :full_name, :content, :comments)
+    ''';
+    FQuery.ParamByName('rowid').AsInteger := ASymbolID;
+    FQuery.ParamByName('name').AsString := AName;
+    FQuery.ParamByName('full_name').AsString := AFullName;
+    FQuery.ParamByName('content').AsWideMemo := AContent;
+    FQuery.ParamByName('comments').AsWideMemo := AComments;
+    FQuery.ExecSQL;
+  except
+    // FTS5 might not be available - ignore errors
+  end;
+end;
+
+procedure TDatabaseBuilder.PopulateFTS5Bulk;
+var
+  Stopwatch: TStopwatch;
+  RowCount: Integer;
+begin
+  WriteLn('Populating FTS5 index in bulk...');
+  Stopwatch := TStopwatch.StartNew;
+
+  try
+    // Count rows to insert
+    FQuery.SQL.Text := 'SELECT COUNT(*) as cnt FROM symbols';
+    FQuery.Open;
+    RowCount := FQuery.FieldByName('cnt').AsInteger;
+    FQuery.Close;
+
+    // Bulk insert all symbols into FTS5
+    FQuery.SQL.Text := '''
+      INSERT INTO symbols_fts(rowid, name, full_name, content, comments)
+      SELECT id, name, full_name, content, comments FROM symbols
+    ''';
+    FQuery.ExecSQL;
+
+    Stopwatch.Stop;
+    WriteLn(Format('FTS5 index populated: %d rows in %dms',
+      [RowCount, Stopwatch.ElapsedMilliseconds]));
+  except
+    on E: Exception do
+      WriteLn(Format('Warning: FTS5 bulk population failed: %s', [E.Message]));
+  end;
+end;
+
+procedure TDatabaseBuilder.DropFTS5Table;
+begin
+  try
+    FQuery.SQL.Text := 'DROP TABLE IF EXISTS symbols_fts';
+    FQuery.ExecSQL;
+    WriteLn('Dropped existing FTS5 table for full reindex');
+  except
+    on E: Exception do
+      WriteLn(Format('Warning: Could not drop FTS5 table: %s', [E.Message]));
+  end;
+end;
+
+procedure TDatabaseBuilder.RecreateFTS5Table;
+begin
+  try
+    FQuery.SQL.Text := '''
+      CREATE VIRTUAL TABLE IF NOT EXISTS symbols_fts USING fts5(
+        name, full_name, content, comments,
+        content='symbols', content_rowid='id'
+      )
+    ''';
+    FQuery.ExecSQL;
+    WriteLn('Recreated FTS5 table');
+  except
+    on E: Exception do
+      WriteLn(Format('Warning: FTS5 not available: %s', [E.Message]));
+  end;
+end;
+
 procedure TDatabaseBuilder.InsertSymbol(const AName, AFullName, AType, AFilePath,
   AContent: string; const AComments, AParentClass: string; AEmbedding: TEmbedding;
   const AFramework, APlatforms, ADelphiVersion: string);
@@ -1184,6 +1273,9 @@ begin
     FQuery.Open;
     SymbolID := FQuery.FieldByName('id').AsInteger;
     FQuery.Close;
+
+    // REQ-007: Insert into FTS5 (unless deferred for bulk population)
+    InsertSymbolToFTS5(SymbolID, AName, AFullName, AContent, AComments);
 
     // Insert embedding into vec0 virtual table
     if Assigned(AEmbedding) then
@@ -1320,13 +1412,16 @@ begin
     FQuery.ParamByName('content_hash').AsString := ContentHash;
 
     FQuery.ExecSQL;
-    
+
     // Get the symbol ID
     FQuery.SQL.Text := 'SELECT last_insert_rowid() as id';
     FQuery.Open;
     SymbolID := FQuery.FieldByName('id').AsInteger;
     FQuery.Close;
-    
+
+    // REQ-007: Insert into FTS5 (unless deferred for bulk population)
+    InsertSymbolToFTS5(SymbolID, AChunk.Name, AChunk.FullName, FTSContent, AChunk.Comments);
+
     // Insert embedding into vec0 virtual table
     if Assigned(AEmbedding) then
     begin
@@ -1364,7 +1459,7 @@ begin
       FQuery.ParamByName('embedding').AsString := VectorJSON;
       FQuery.ExecSQL;
     end;
-    
+
   except
     on E: Exception do
       raise Exception.CreateFmt('Failed to insert symbol "%s": %s', [AChunk.Name, E.Message]);
@@ -1493,6 +1588,26 @@ begin
     // Create connection and tables (load vec0 only if embeddings enabled)
     CreateConnection(ADatabaseFile, AEmbeddingDimensions > 0);
     CreateTables;
+
+    // REQ-007: For full reindex, defer FTS5 population until end
+    // REQ-008: Use larger batch size for full reindex
+    if AForceFullReindex then
+    begin
+      FDeferFTS5 := True;
+      DropFTS5Table;  // Will be recreated after bulk population
+      RecreateFTS5Table;  // Create empty FTS5 table structure
+      // Override batch size for full reindex (REQ-008)
+      if ABatchSize < 500 then
+        ABatchSize := 500;
+      WriteLn(Format('Full reindex mode: FTS5 deferred, batch size = %d', [ABatchSize]));
+    end
+    else
+    begin
+      FDeferFTS5 := False;
+      // For incremental indexing, use smaller batch size for better checkpointing
+      if ABatchSize > 100 then
+        ABatchSize := 100;
+    end;
 
     // Initialize framework detector (if not using explicit framework)
     // Only initialize if database existed before - avoids database lock when creating new DB
@@ -1765,6 +1880,13 @@ begin
         FileChunks.Free;
       ChunksByFile.Free;
       ScannedFiles.Free;
+    end;
+
+    // REQ-007: Populate FTS5 in bulk if it was deferred (full reindex mode)
+    if FDeferFTS5 then
+    begin
+      PopulateFTS5Bulk;
+      FDeferFTS5 := False;  // Reset for next indexing operation
     end;
 
     // Analyze database for optimal query performance
@@ -2338,6 +2460,13 @@ var
 begin
   EndTime := Now;
 
+  // REQ-007: Populate FTS5 in bulk if it was deferred
+  if FDeferFTS5 then
+  begin
+    PopulateFTS5Bulk;
+    FDeferFTS5 := False;  // Reset for next indexing operation
+  end;
+
   // Calculate folder hash for incremental indexing (REQ-003)
   // This hash is stored and compared on next run to detect changes
   ChangeDetector := TChangeDetector.Create(FConnection);
@@ -2446,6 +2575,9 @@ begin
       FQuery.Open;
       SymbolID := FQuery.FieldByName('id').AsInteger;
       FQuery.Close;
+
+      // REQ-007: Insert into FTS5 (unless deferred for bulk population)
+      InsertSymbolToFTS5(SymbolID, Symbol.Name, Symbol.FullName, Symbol.Content, Symbol.Comments);
 
       // Insert embedding if present
       if Symbol.HasEmbedding and (Length(Symbol.EmbeddingVector) > 0) then
