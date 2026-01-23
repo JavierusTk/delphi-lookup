@@ -2000,7 +2000,6 @@ end;
 
 function TDatabaseBuilder.TableExists(const ATable: string): Boolean;
 begin
-  Result := False;
   FQuery.SQL.Text := 'SELECT name FROM sqlite_master WHERE type=''table'' AND name=:tablename';
   FQuery.ParamByName('tablename').AsString := ATable;
   FQuery.Open;

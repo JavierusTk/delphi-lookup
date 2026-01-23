@@ -115,7 +115,6 @@ type
     // Cascade deletion helpers (REQ-004)
     procedure DeleteCascadeFolder(const AFolderPath: string;
       out ADeletedSymbols, ADeletedFiles, ADeletedFolders: Integer);
-    function CollectFolderIDsRecursive(const AFolderPath: string): TList<Integer>;
 
   public
     constructor Create(AConnection: TFDConnection);
@@ -181,7 +180,8 @@ implementation
 
 uses
   System.JSON,
-  System.StrUtils;
+  System.StrUtils,
+  FireDAC.Stan.Param;
 
 { TChangeDetector }
 
@@ -808,30 +808,6 @@ begin
 end;
 
 { REQ-004: Cascade Deletion Implementation }
-
-function TChangeDetector.CollectFolderIDsRecursive(const AFolderPath: string): TList<Integer>;
-var
-  FolderPattern: string;
-begin
-  // Collect all folder rowids that match or are children of AFolderPath
-  // Using folder_path LIKE pattern for recursive collection
-  Result := TList<Integer>.Create;
-  FolderPattern := AFolderPath + '%';
-
-  FQuery.SQL.Text :=
-    'SELECT rowid FROM indexed_folders WHERE folder_path LIKE :pattern';
-  FQuery.ParamByName('pattern').AsString := FolderPattern;
-  FQuery.Open;
-  try
-    while not FQuery.Eof do
-    begin
-      Result.Add(FQuery.FieldByName('rowid').AsInteger);
-      FQuery.Next;
-    end;
-  finally
-    FQuery.Close;
-  end;
-end;
 
 procedure TChangeDetector.DeleteCascadeFolder(const AFolderPath: string;
   out ADeletedSymbols, ADeletedFiles, ADeletedFolders: Integer);
