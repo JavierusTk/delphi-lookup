@@ -33,7 +33,6 @@ type
 
     function CreateSearchResultFromQuery(ADistance: Double): TSearchResult;
     procedure LoadExtension;
-    function ReadMetadata(const AKey: string): string;
     procedure ReadAllMetadata(out AModel, ADimensions, AOllamaURL: string);
     function DetectDistanceFunction: TDistanceFunction;
     function DistanceToScore(ADistance: Double): Double;
@@ -138,20 +137,6 @@ begin
       WriteLn(Format('Failed to load sqlite-vec extension: %s', [E.Message]));
       raise;
     end;
-  end;
-end;
-
-function TVectorSearch.ReadMetadata(const AKey: string): string;
-begin
-  Result := '';
-  FQuery.SQL.Text := 'SELECT value FROM metadata WHERE key = :key';
-  FQuery.ParamByName('key').AsString := AKey;
-  FQuery.Open;
-  try
-    if not FQuery.EOF then
-      Result := FQuery.FieldByName('value').AsString;
-  finally
-    FQuery.Close;
   end;
 end;
 

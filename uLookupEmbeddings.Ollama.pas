@@ -53,8 +53,6 @@ type
     function LooksLikeIdentifier(const AText: string): Boolean;
     function GetCachedVector(const AQuery: string): TVector;
     procedure CacheVector(const AQuery: string; const AVector: TVector);
-    procedure CleanExpiredCache;
-
   public
     constructor Create(const AOllamaURL: string; const AModelName: string);
     destructor Destroy; override;
@@ -218,30 +216,6 @@ begin
   Entry.Timestamp := Now;
 
   FQueryCache.AddOrSetValue(LowerCase(AQuery), Entry);
-end;
-
-procedure TOllamaEmbeddingGenerator.CleanExpiredCache;
-var
-  Key: string;
-  Entry: TEmbeddingCacheEntry;
-  KeysToRemove: TList<string>;
-begin
-  KeysToRemove := TList<string>.Create;
-  try
-    for Key in FQueryCache.Keys do
-    begin
-      if FQueryCache.TryGetValue(Key, Entry) then
-      begin
-        if Now - Entry.Timestamp >= FCacheMaxAge then
-          KeysToRemove.Add(Key);
-      end;
-    end;
-
-    for Key in KeysToRemove do
-      FQueryCache.Remove(Key);
-  finally
-    KeysToRemove.Free;
-  end;
 end;
 
 procedure TOllamaEmbeddingGenerator.ClearCache;
