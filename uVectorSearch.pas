@@ -243,6 +243,9 @@ begin
     begin
       TDatabaseConnectionHelper.ConfigureConnection(FConnection, ADatabaseFile, True);
       FConnection.Open;
+      // Enable WAL mode for concurrent access (required for parallel search)
+      FQuery.SQL.Text := 'PRAGMA journal_mode=WAL';
+      FQuery.ExecSQL;
       // Load sqlite-vec extension only for owned connections
       LoadExtension;
     end;

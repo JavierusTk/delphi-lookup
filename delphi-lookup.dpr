@@ -14,6 +14,7 @@ uses
   System.Classes,
   System.IOUtils,
   System.Diagnostics,
+  System.Threading,
   System.Hash,
   Data.DB,
   FireDAC.Comp.Client,
@@ -906,6 +907,34 @@ begin
   Result := True;
 end;
 
+function MergeSearchResults(AFTS5Results, ASemanticResults: TSearchResultList;
+  AMaxResults: Integer): TSearchResultList;
+begin
+  // Combines FTS5 and semantic results, deduplicates by SymbolID, keeps best score
+  // Takes ownership of input lists and frees them
+  Result := TSearchResultList.Create;
+
+  // Transfer FTS5 results (higher priority - exact/fuzzy matches)
+  while AFTS5Results.Count > 0 do
+    Result.Add(AFTS5Results.Extract(AFTS5Results[AFTS5Results.Count - 1]));
+
+  // Transfer semantic results (unique conceptual matches)
+  while ASemanticResults.Count > 0 do
+    Result.Add(ASemanticResults.Extract(ASemanticResults[ASemanticResults.Count - 1]));
+
+  // Deduplicate and sort (RemoveDuplicates keeps higher score for each SymbolID)
+  Result.RemoveDuplicates;
+  Result.SortByRelevance;
+
+  // Limit results
+  while Result.Count > AMaxResults do
+    Result.Delete(Result.Count - 1);
+
+  // Free emptied input lists
+  AFTS5Results.Free;
+  ASemanticResults.Free;
+end;
+
 procedure PerformSearch;
 var
   SearchResults: TSearchResultList;
@@ -959,9 +988,32 @@ begin
       end
       else
       begin
-        // Cache miss - initialize QueryProcessor and perform full search
+        // Cache miss - initialize components and perform full search
         IsCacheHit := False;
 
+        // Initialize vector search FIRST (if enabled) to avoid schema lock issues
+        // VectorSearch opens its own connection before QueryProcessor
+        if UseSemanticSearch then
+        begin
+          WriteLn('Parallel search mode: FTS5 + semantic running concurrently');
+          WriteLn;
+
+          // Create VectorSearch with its OWN connection (required for parallel execution)
+          // Each thread needs separate SQLite connection for thread safety
+          VectorSearch := TVectorSearch.Create;  // FOwnsConnection = True
+          try
+            VectorSearch.Initialize(DatabaseFile, EmbeddingURL);
+          except
+            on E: Exception do
+            begin
+              WriteLn(Format('Warning: Vector search initialization failed: %s', [E.Message]));
+              WriteLn('Continuing with FTS5 search only...');
+              FreeAndNil(VectorSearch);  // Ensure it's nil if initialization failed
+            end;
+          end;
+        end;
+
+        // Initialize QueryProcessor after VectorSearch (avoids schema lock)
         QueryProcessor.Initialize(DatabaseFile);
 
         // Apply filters to QueryProcessor
@@ -972,43 +1024,100 @@ begin
         QueryProcessor.SymbolTypeFilter := SymbolTypeFilter;
         QueryProcessor.FrameworkFilter := FrameworkFilter;
 
-        // Initialize vector search (only if enabled)
-        if UseSemanticSearch then
-        begin
-          WriteLn('WARNING: Semantic search enabled - results may have low precision (~40%).');
-          WriteLn('         Traditional name matching is more accurate for this codebase.');
-          WriteLn;
-
-          // Load vec0 extension on QueryProcessor's connection
-          WriteLn('Loading sqlite-vec extension for vector search...');
-          TDatabaseConnectionHelper.LoadVec0Extension(QueryProcessor.Connection);
-          WriteLn('sqlite-vec extension loaded successfully');
-
-          // Use QueryProcessor's connection to avoid "schema locked" error
-          VectorSearch := TVectorSearch.Create(QueryProcessor.Connection);
-          try
-            VectorSearch.Initialize(DatabaseFile, EmbeddingURL);
-          except
-            on E: Exception do
-            begin
-              WriteLn(Format('Warning: Vector search initialization failed: %s', [E.Message]));
-              WriteLn('Continuing with symbolic search only...');
-              FreeAndNil(VectorSearch);  // Ensure it's nil if initialization failed
-            end;
-          end;
-        end;
-
         // Perform search (with or without reranking)
         if UseReranker then
         begin
+          // Reranker mode: sequential execution (reranker needs combined results)
+          if UseSemanticSearch and Assigned(VectorSearch) then
+          begin
+            // Need to load vec0 on QueryProcessor for combined search
+            TDatabaseConnectionHelper.LoadVec0Extension(QueryProcessor.Connection);
+          end;
+
           WriteLn(Format('Using two-stage search (Stage 1: %d candidates, Stage 2: rerank to top %d)',
             [CandidateCount, NumResults]));
           WriteLn;
           SearchResults := QueryProcessor.PerformHybridSearchWithReranking(
             QueryText, NumResults, VectorSearch, True, CandidateCount, MaxDistance, RerankerURL);
         end
+        else if UseSemanticSearch and Assigned(VectorSearch) then
+        begin
+          // PARALLEL EXECUTION: FTS5 and semantic search run concurrently
+          // This gives us semantic quality without latency penalty
+          // FTS5 takes ~2.3s, semantic takes ~0.5s, parallel = max(2.3s, 0.5s) = 2.3s
+          var FTS5Results: TSearchResultList := nil;
+          var SemanticResults: TSearchResultList := nil;
+          var FTS5Exception: Exception := nil;
+          var SemanticException: Exception := nil;
+
+          // Request more results from each source for better merge quality
+          var ParallelMaxResults := NumResults * 2;
+
+          WriteLn(Format('Starting parallel search (requesting %d from each source)...', [ParallelMaxResults]));
+
+          var FTS5Task := TTask.Run(
+            procedure
+            begin
+              try
+                // FTS5 search: exact + fuzzy + full-text (no vector search)
+                FTS5Results := QueryProcessor.PerformHybridSearch(
+                  QueryText, ParallelMaxResults, nil, MaxDistance);
+              except
+                on E: Exception do
+                  FTS5Exception := Exception.Create(E.Message);
+              end;
+            end);
+
+          var SemanticTask := TTask.Run(
+            procedure
+            begin
+              try
+                // Semantic search: vector similarity
+                SemanticResults := VectorSearch.SearchSimilar(
+                  QueryText, ParallelMaxResults, MaxDistance);
+              except
+                on E: Exception do
+                  SemanticException := Exception.Create(E.Message);
+              end;
+            end);
+
+          // Wait for both tasks to complete
+          TTask.WaitForAll([FTS5Task, SemanticTask]);
+
+          // Check for exceptions
+          if Assigned(FTS5Exception) then
+          begin
+            if Assigned(SemanticResults) then
+              SemanticResults.Free;
+            raise FTS5Exception;
+          end;
+
+          if Assigned(SemanticException) then
+          begin
+            WriteLn(Format('Warning: Semantic search failed: %s', [SemanticException.Message]));
+            SemanticException.Free;
+            // Continue with FTS5 results only
+            if not Assigned(SemanticResults) then
+              SemanticResults := TSearchResultList.Create;
+          end;
+
+          // Ensure we have valid lists
+          if not Assigned(FTS5Results) then
+            FTS5Results := TSearchResultList.Create;
+          if not Assigned(SemanticResults) then
+            SemanticResults := TSearchResultList.Create;
+
+          WriteLn(Format('Parallel search complete: FTS5=%d results, Semantic=%d results',
+            [FTS5Results.Count, SemanticResults.Count]));
+
+          // Merge results (takes ownership of input lists)
+          SearchResults := MergeSearchResults(FTS5Results, SemanticResults, NumResults);
+
+          WriteLn(Format('Merged to %d unique results', [SearchResults.Count]));
+        end
         else
-          SearchResults := QueryProcessor.PerformHybridSearch(QueryText, NumResults, VectorSearch, MaxDistance);
+          // FTS5 only (no semantic search)
+          SearchResults := QueryProcessor.PerformHybridSearch(QueryText, NumResults, nil, MaxDistance);
 
         Stopwatch.Stop;
       end;
