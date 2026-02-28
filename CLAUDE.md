@@ -81,6 +81,38 @@ Diagnostic tool to verify FTS5 support in sqlite3.dll.
 ./CheckFTS5.exe
 ```
 
+### delphi-lsp-server.exe
+LSP server for Claude Code integration. Provides real-time code intelligence via Language Server Protocol.
+
+```bash
+# Run as LSP server (launched automatically by Claude Code plugin)
+delphi-lsp-server.exe --database delphi_symbols.db
+
+# With debug logging
+delphi-lsp-server.exe --database delphi_symbols.db --log /tmp/delphi-lsp.log
+```
+
+**LSP capabilities:**
+- `textDocument/definition` — go to definition (~50ms)
+- `textDocument/references` — find all references
+- `textDocument/hover` — type info + documentation
+- `textDocument/documentSymbol` — all symbols in a file
+- `workspace/symbol` — global symbol search
+
+**Configuration:** Environment variables `DELPHI_LSP_DATABASE` and `DELPHI_LSP_LOG`, or CLI args `--database` / `--log`.
+
+**Claude Code plugin setup:** See [claude-code/SETUP.md](claude-code/SETUP.md) for installation. Requires:
+1. `ENABLE_LSP_TOOL: "1"` in `~/.claude/settings.json`
+2. Plugin installed via `claude --plugin-dir` or `claude plugin install`
+3. `delphi-lsp-server` in PATH
+
+**Plugin files:**
+- `.claude-plugin/plugin.json` — plugin manifest
+- `.lsp.json` — LSP server configuration
+- `skills/delphi-lookup/SKILL.md` — Claude Code skill
+
+See [LSP-GUIDE.md](LSP-GUIDE.md) for full technical documentation.
+
 ## Configuration
 
 delphi-lookup supports configuration via JSON file, environment variables, or command-line parameters (in order of precedence: CLI > env > config file).
@@ -483,13 +515,15 @@ QueryHash := GenerateQueryHash(Query, [Filters...]);
 - **[USER-GUIDE.md](USER-GUIDE.md)** - Complete usage guide
 - **[TECHNICAL-GUIDE.md](TECHNICAL-GUIDE.md)** - Implementation details
 - **[DATABASE-SCHEMA.md](DATABASE-SCHEMA.md)** - Schema reference
+- **[LSP-GUIDE.md](LSP-GUIDE.md)** - LSP server technical reference
+- **[claude-code/SETUP.md](claude-code/SETUP.md)** - Claude Code plugin setup
 - **[TESTS.md](TESTS.md)** - Testing guide
 
 ## Build Environment
 
 - **Platform:** Windows x64
 - **Delphi:** RAD Studio 12
-- **Project files:** `delphi-indexer.dproj`, `delphi-lookup.dproj`, `CheckFTS5.dproj`
+- **Project files:** `delphi-indexer.dproj`, `delphi-lookup.dproj`, `delphi-lsp-server.dproj`, `CheckFTS5.dproj`
 
 ---
 

@@ -1,0 +1,21 @@
+{
+  "delphi": {
+    "command": "delphi-lsp-server",
+    "args": [],
+    "extensionToLanguage": {
+      ".pas": "pascal",
+      ".dpr": "pascal",
+      ".dpk": "pascal",
+      ".inc": "pascal"
+    },
+    "transport": "stdio",
+    "env": {
+      "DELPHI_LSP_DATABASE": "",
+      "DELPHI_LSP_LOG": ""
+    },
+    "startupTimeout": 30000,
+    "shutdownTimeout": 5000,
+    "restartOnCrash": true,
+    "maxRestarts": 3
+  }
+}

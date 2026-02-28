@@ -168,18 +168,20 @@ See CLAUDE.md for full configuration reference.
 
 ## AI Tool Integration
 
-### Claude Code
+### Claude Code (LSP Plugin)
 
-delphi-lookup includes a skill for [Claude Code](https://claude.ai/code) that teaches it to use delphi-lookup automatically for Pascal symbol searches.
+delphi-lookup includes an **LSP plugin** for [Claude Code](https://claude.ai/code) that provides real-time code intelligence — go-to-definition, find references, hover info, and symbol search. ~50ms per query vs 30-60s with grep.
 
-**Quick setup** - paste this to Claude Code:
+**Quick setup (2 minutes):**
 
-```
-Install the delphi-lookup skill: copy claude-code/skill.md to ~/.claude/skills/delphi-lookup/
-and add the memory instructions from claude-code/SETUP.md to my CLAUDE.md
-```
+1. Add `"ENABLE_LSP_TOOL": "1"` to `~/.claude/settings.json`
+2. Compile `delphi-lsp-server.dproj` and add the exe to PATH
+3. Load plugin: `claude --plugin-dir /path/to/delphi-lookup`
+4. Restart Claude Code
 
-See **[claude-code/SETUP.md](claude-code/SETUP.md)** for detailed instructions.
+Then just ask naturally: *"Where is TMyClass defined?"* — Claude uses LSP automatically.
+
+See **[claude-code/SETUP.md](claude-code/SETUP.md)** for detailed instructions and **[LSP-GUIDE.md](LSP-GUIDE.md)** for technical documentation.
 
 ### Gemini CLI
 

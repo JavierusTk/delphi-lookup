@@ -1,21 +1,13 @@
 {
   "name": "delphi-lsp",
-  "description": "Delphi/Pascal language server for code intelligence (go-to-definition, references, hover, symbols)",
-  "version": "1.0.0",
-  "lspServers": {
-    "delphi": {
-      "command": "/mnt/w/Public/delphi-lookup/delphi-lsp-server.exe",
-      "args": ["--database", "W:\\Public\\delphi-lookup\\delphi_symbols.db"],
-      "extensionToLanguage": {
-        ".pas": "pascal",
-        ".dpr": "pascal",
-        ".dpk": "pascal",
-        ".inc": "pascal"
-      },
-      "env": {
-        "DELPHI_LSP_LOG": "/tmp/delphi-lsp.log"
-      },
-      "startupTimeout": 30000
-    }
-  }
+  "version": "1.1.0",
+  "description": "Delphi/Pascal language server for Claude Code — provides go-to-definition, find references, hover, document symbols, and workspace symbol search powered by delphi-lookup's FTS5 index.",
+  "author": {
+    "name": "JavierusTk",
+    "url": "https://github.com/JavierusTk/delphi-lookup"
+  },
+  "repository": "https://github.com/JavierusTk/delphi-lookup",
+  "license": "MIT",
+  "keywords": ["delphi", "pascal", "lsp", "code-intelligence", "symbol-search"],
+  "lspServers": "./.lsp.json"
 }
