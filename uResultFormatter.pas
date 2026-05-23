@@ -26,6 +26,10 @@ type
     procedure FormatResults(AResults: TSearchResultList; const AQuery: string);
     procedure FormatSingleResult(AResult: TSearchResult; AIndex: Integer);
     procedure FormatCompactResults(AResults: TSearchResultList; const AQuery: string);
+    // AI-optimized: single line per result, no chrome. The default since v1.6.
+    // See docs/AI-OUTPUT-COMPACT.md.
+    procedure FormatUltraCompactSingleResult(AResult: TSearchResult; AIndex: Integer);
+    procedure FormatUltraCompactResults(AResults: TSearchResultList; const AQuery: string);
     procedure FormatResultsAsJSON(AResults: TSearchResultList; const AQuery: string;
       ADurationMs: Integer; AIsCacheHit: Boolean);
   end;
@@ -548,6 +552,60 @@ begin
     if I < AResults.Count - 1 then
       WriteLn;
   end;
+end;
+
+procedure TResultFormatter.FormatUltraCompactSingleResult(AResult: TSearchResult; AIndex: Integer);
+var
+  Signature, Location, CategoryInfo: string;
+begin
+  // One line per result, optimized for AI agent consumption.
+  // Format: N. [Decl] signature  full-path:line  [category,framework]
+  // The full path + line lets an agent jump directly with Read offset=line
+  // — no follow-up Grep needed.
+
+  Signature := ExtractSignature(AResult);
+  if AResult.IsDeclaration then
+    Signature := '[Decl] ' + Signature;
+
+  // Location: full path + line number (or just path if line is missing/0).
+  if AResult.FilePath <> '' then
+  begin
+    if AResult.StartLine > 0 then
+      Location := Format('%s:%d', [AResult.FilePath, AResult.StartLine])
+    else
+      Location := AResult.FilePath;
+  end
+  else
+    Location := '?';
+
+  // Category and framework in one bracket: [user,VCL] or [stdlib] if no framework.
+  if AResult.SourceCategory <> '' then
+  begin
+    CategoryInfo := AResult.SourceCategory;
+    if AResult.Framework <> '' then
+      CategoryInfo := CategoryInfo + ',' + AResult.Framework;
+    CategoryInfo := ' [' + CategoryInfo + ']';
+  end
+  else
+    CategoryInfo := '';
+
+  WriteLn(Format('%d. %s  %s%s', [AIndex, Signature, Location, CategoryInfo]));
+end;
+
+procedure TResultFormatter.FormatUltraCompactResults(AResults: TSearchResultList; const AQuery: string);
+var
+  I: Integer;
+begin
+  // No "Found N result(s) for X:" preamble — that's chrome an agent will skip anyway.
+  // Zero-result case is a single line, not a multi-line "Try…" prose.
+  if AResults.Count = 0 then
+  begin
+    WriteLn(Format('No results for "%s".', [AQuery]));
+    Exit;
+  end;
+
+  for I := 0 to AResults.Count - 1 do
+    FormatUltraCompactSingleResult(AResults[I], I + 1);
 end;
 
 procedure TResultFormatter.FormatResults(AResults: TSearchResultList; const AQuery: string);

@@ -67,6 +67,9 @@ var
   RerankerURL: string;
   OutputJSON: Boolean;
   OutputFull: Boolean;
+  UseCompactV1: Boolean; // Legacy 2-line compact output (pre-v1.6)
+  WithTiming: Boolean;   // Append "// Search completed in N ms" footer
+  EmitChrome: Boolean;   // Derived: emit "// Context", "// [CACHE HIT]" headers
 
 function GetDefaultDatabasePath: string;
 begin
@@ -623,7 +626,11 @@ begin
   WriteLn('  Command line options override config file values.');
   WriteLn;
   WriteLn('Output:');
+  WriteLn('  (default)            : Ultra-compact, one line per result, no chrome (AI-optimized)');
+  WriteLn('  --full               : Verbose multi-line format with separators');
+  WriteLn('  --compact-v1         : Legacy 2-line compact format (pre-v1.6)');
   WriteLn('  --json               : Output results as JSON (machine-readable)');
+  WriteLn('  --with-timing        : Append "// Search completed in N ms" footer');
   WriteLn;
   WriteLn('Analytics:');
   WriteLn('  --stats              : Show usage statistics');
@@ -913,6 +920,11 @@ begin
   // Output mode
   OutputJSON := PM.HasParameter('json');
   OutputFull := PM.HasParameter('full');
+  UseCompactV1 := PM.HasParameter('compact-v1');
+  WithTiming := PM.HasParameter('with-timing');
+  // Chrome (// Context, // [CACHE HIT], status messages) is only emitted in verbose modes.
+  // Default (ultra-compact) and JSON modes suppress all // chrome lines.
+  EmitChrome := OutputFull or UseCompactV1;
 
   // Get query text (first positional argument)
   QueryText := GetFirstPositionalArg;
@@ -976,7 +988,7 @@ begin
         Halt(1);
       end;
 
-      if not OutputJSON then
+      if EmitChrome then
       begin
         WriteLn(Format('// Context for query: "%s"', [QueryText]));
         WriteLn;
@@ -1005,7 +1017,7 @@ begin
         // Cache hit - no need to initialize QueryProcessor
         IsCacheHit := True;
         Stopwatch.Stop;
-        if not OutputJSON then
+        if EmitChrome then
         begin
           WriteLn(Format('// [CACHE HIT] Loaded %d results from cache in %d ms',
             [SearchResults.Count, Stopwatch.ElapsedMilliseconds]));
@@ -1168,11 +1180,19 @@ begin
         WriteLn;
         WriteLn(Format('// Search completed in %d ms', [SearchDurationMs]));
       end
-      else
+      else if UseCompactV1 then
       begin
         ResultFormatter.FormatCompactResults(SearchResults, QueryText);
         WriteLn;
         WriteLn(Format('// Search completed in %d ms', [SearchDurationMs]));
+      end
+      else
+      begin
+        // Default: AI-optimized ultra-compact (one line per result, no chrome).
+        // See docs/AI-OUTPUT-COMPACT.md.
+        ResultFormatter.FormatUltraCompactResults(SearchResults, QueryText);
+        if WithTiming then
+          WriteLn(Format('// Search completed in %d ms', [SearchDurationMs]));
       end;
 
     finally
