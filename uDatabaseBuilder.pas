@@ -201,6 +201,10 @@ type
     /// <summary>Migrate indexed_folders schema for Merkle-tree support (REQ-002)</summary>
     procedure MigrateToFolderHierarchySchema;
 
+    /// <summary>Rebuild symbols table with UNIQUE(name,file_path,type,start_line)
+    /// so overloaded symbols at different lines no longer overwrite each other.</summary>
+    procedure MigrateUniqueConstraintForOverloads;
+
     /// <summary>Insert symbol with documentation fields (for CHM indexing)</summary>
     procedure InsertSymbol(const AName, AFullName, AType, AFilePath, AContent: string;
       const AComments, AParentClass: string; AEmbedding: TEmbedding;
@@ -564,7 +568,12 @@ begin
         content_hash TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
-        UNIQUE(name, file_path, type)
+        -- start_line is part of the UNIQUE key so overloaded functions/methods
+        -- at different lines in the same file each get their own row. Without
+        -- start_line, all overloads sharing (name, file_path, type) would
+        -- collapse to a single row under INSERT OR REPLACE — TableMax.Query.pas
+        -- had 4 CrearQuery overloads at lines 150-153 but only one row.
+        UNIQUE(name, file_path, type, start_line)
       )
     ''';
     FQuery.ExecSQL;
@@ -2110,6 +2119,10 @@ begin
 
   // REQ-002: Migrate indexed_folders for Merkle-tree hierarchical change detection
   MigrateToFolderHierarchySchema;
+
+  // Migrate UNIQUE(name,file_path,type) → UNIQUE(name,file_path,type,start_line)
+  // so overloaded symbols at different lines coexist instead of overwriting each other.
+  MigrateUniqueConstraintForOverloads;
 end;
 
 procedure TDatabaseBuilder.MigrateQueryLogToCache;
@@ -2306,6 +2319,157 @@ begin
   end
   else
     WriteLn('Folder hierarchy schema already migrated (folder_hash column exists)');
+end;
+
+procedure TDatabaseBuilder.MigrateUniqueConstraintForOverloads;
+var
+  CurrentSchema: string;
+  StartTime: TDateTime;
+  RowCount: Integer;
+begin
+  // SQLite cannot ALTER an existing UNIQUE constraint, so this migration rebuilds
+  // the symbols table. The signature we detect for the old constraint is the
+  // literal "UNIQUE(name, file_path, type)" without start_line. New databases
+  // created via CreateTables already include start_line and skip this branch.
+
+  FQuery.SQL.Text := 'SELECT sql FROM sqlite_master WHERE type=''table'' AND name=''symbols''';
+  FQuery.Open;
+  try
+    if FQuery.EOF then
+      Exit; // No symbols table → nothing to migrate (will be created by CreateTables)
+    CurrentSchema := FQuery.FieldByName('sql').AsString;
+  finally
+    FQuery.Close;
+  end;
+
+  if Pos('UNIQUE(name, file_path, type, start_line)', CurrentSchema) > 0 then
+  begin
+    WriteLn('symbols UNIQUE constraint already includes start_line — skipping overload migration');
+    Exit;
+  end;
+
+  if Pos('UNIQUE(name, file_path, type)', CurrentSchema) = 0 then
+  begin
+    // Unknown schema variant — abort to avoid data loss
+    WriteLn('Warning: symbols table has an unexpected UNIQUE clause, overload migration skipped.');
+    WriteLn('  Current schema fragment: ' + CurrentSchema);
+    Exit;
+  end;
+
+  WriteLn('Rebuilding symbols table to allow per-line uniqueness (overload support)...');
+  StartTime := Now;
+
+  // Disable foreign keys during the rebuild; FTS5/vec0 are virtual tables and
+  // store their own data, but their content='symbols' reference is name-based
+  // and the rowid mapping (symbols.id) is preserved by INSERT SELECT *.
+  FQuery.SQL.Text := 'PRAGMA foreign_keys = OFF';
+  FQuery.ExecSQL;
+
+  FConnection.StartTransaction;
+  try
+    // Create the new table with the wider UNIQUE constraint. Keep every other
+    // column identical to CreateTables to minimise drift.
+    FQuery.SQL.Text := '''
+      CREATE TABLE symbols_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        full_name TEXT,
+        type TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        content TEXT NOT NULL,
+        enriched_text TEXT,
+        spanish_terms TEXT,
+        domain_tags TEXT,
+        comments TEXT,
+        parent_class TEXT,
+        implemented_interfaces TEXT,
+        visibility TEXT,
+        start_line INTEGER,
+        end_line INTEGER,
+        content_type TEXT NOT NULL DEFAULT 'code',
+        source_category TEXT NOT NULL DEFAULT 'user',
+        framework TEXT,
+        platforms TEXT,
+        delphi_version TEXT,
+        introduced_version TEXT,
+        deprecated_version TEXT,
+        is_declaration INTEGER DEFAULT 0,
+        is_inherited INTEGER DEFAULT 0,
+        inherited_from TEXT,
+        content_hash TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+        UNIQUE(name, file_path, type, start_line)
+      )
+    ''';
+    FQuery.ExecSQL;
+
+    // Copy all rows. Each old row has a unique (name, file_path, type) tuple,
+    // so it automatically satisfies the new constraint too (no duplicate keys
+    // can occur). Preserving id keeps vec_embeddings.symbol_id and
+    // query_cache.result_ids references valid.
+    FQuery.SQL.Text := '''
+      INSERT INTO symbols_new
+      SELECT
+        id, name, full_name, type, file_path, content, enriched_text,
+        spanish_terms, domain_tags, comments, parent_class,
+        implemented_interfaces, visibility, start_line, end_line,
+        content_type, source_category, framework, platforms,
+        delphi_version, introduced_version, deprecated_version,
+        is_declaration, is_inherited, inherited_from, content_hash, created_at
+      FROM symbols
+    ''';
+    FQuery.ExecSQL;
+    RowCount := FQuery.RowsAffected;
+
+    FQuery.SQL.Text := 'DROP TABLE symbols';
+    FQuery.ExecSQL;
+
+    FQuery.SQL.Text := 'ALTER TABLE symbols_new RENAME TO symbols';
+    FQuery.ExecSQL;
+
+    FConnection.Commit;
+  except
+    on E: Exception do
+    begin
+      FConnection.Rollback;
+      FQuery.SQL.Text := 'PRAGMA foreign_keys = ON';
+      FQuery.ExecSQL;
+      raise Exception.CreateFmt(
+        'Failed to migrate symbols UNIQUE constraint: %s', [E.Message]);
+    end;
+  end;
+
+  FQuery.SQL.Text := 'PRAGMA foreign_keys = ON';
+  FQuery.ExecSQL;
+
+  // Recreate explicit indexes — DROP TABLE removed them. The UNIQUE constraint
+  // autoindex is recreated automatically by CREATE TABLE above.
+  FQuery.SQL.Text := 'CREATE INDEX IF NOT EXISTS idx_symbols_name_nocase ON symbols(name COLLATE NOCASE)';
+  FQuery.ExecSQL;
+  FQuery.SQL.Text := 'CREATE INDEX IF NOT EXISTS idx_symbols_type ON symbols(type)';
+  FQuery.ExecSQL;
+  FQuery.SQL.Text := 'CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_path)';
+  FQuery.ExecSQL;
+  FQuery.SQL.Text := 'CREATE INDEX IF NOT EXISTS idx_symbols_parent_nocase ON symbols(parent_class COLLATE NOCASE)';
+  FQuery.ExecSQL;
+  FQuery.SQL.Text := 'CREATE INDEX IF NOT EXISTS idx_symbols_fullname_nocase ON symbols(full_name COLLATE NOCASE)';
+  FQuery.ExecSQL;
+  FQuery.SQL.Text := 'CREATE INDEX IF NOT EXISTS idx_symbols_content_type ON symbols(content_type)';
+  FQuery.ExecSQL;
+  FQuery.SQL.Text := 'CREATE INDEX IF NOT EXISTS idx_symbols_source_category ON symbols(source_category)';
+  FQuery.ExecSQL;
+  FQuery.SQL.Text := 'CREATE INDEX IF NOT EXISTS idx_symbols_classification ON symbols(content_type, source_category)';
+  FQuery.ExecSQL;
+  FQuery.SQL.Text := 'CREATE INDEX IF NOT EXISTS idx_symbols_domains ON symbols(domain_tags)';
+  FQuery.ExecSQL;
+  FQuery.SQL.Text := 'CREATE INDEX IF NOT EXISTS idx_symbols_id_hash ON symbols(id, content_hash)';
+  FQuery.ExecSQL;
+
+  WriteLn(Format('Symbols table rebuilt with new UNIQUE constraint: %d rows preserved (%.1fs).',
+    [RowCount, (Now - StartTime) * 86400.0]));
+  WriteLn('Re-index affected files with `delphi-indexer.exe <path> --force` to capture overloads');
+  WriteLn('that were previously collapsed (e.g., TableMax.Query.pas''s 4 CrearQuery overloads).');
 end;
 
 function TDatabaseBuilder.DetectFramework(const AFilePath, AUnitName: string): string;
