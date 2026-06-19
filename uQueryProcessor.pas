@@ -429,6 +429,19 @@ begin
   try
     // Fetch ALL symbols with this exact name (overloads, decl+impl).
     // Uses idx_symbols_name_nocase → SEARCH, not SCAN. ~1ms for any count.
+    //
+    // Ordering tiers (lower wins):
+    //   1. type weight (class > interface > function > procedure)
+    //   2. is_declaration DESC (interface decls before implementations)
+    //   3. full_name dot count ASC — standalone symbols (full_name='Foo') before
+    //      class methods (full_name='TBar.Foo'). Without this tier, the canonical
+    //      standalone CrearQuery in VCL\DBdata\TableMax.Query.pas was buried under
+    //      4 class-method overrides in Clientes\GMC\*.pas that share the same name.
+    //   4. 'override;' content marker — demote subclass overrides below the symbol
+    //      they override.
+    //   5. 'abstract;' content marker — demote abstract-base declarations below
+    //      concrete declarations.
+    //   6. file_path (stable tie-break)
     FQuery.SQL.Text :=
       'SELECT * FROM symbols ' +
       'WHERE name = :query COLLATE NOCASE ' +
@@ -442,6 +455,10 @@ begin
       '    ELSE 5 ' +
       '  END' +
       IfThen(FHasIsDeclaration, ', is_declaration DESC ') +
+      ', LENGTH(COALESCE(full_name, name, '''')) ' +
+      '  - LENGTH(REPLACE(COALESCE(full_name, name, ''''), ''.'', '''')) ASC ' +
+      ', CASE WHEN content LIKE ''%override;%'' THEN 1 ELSE 0 END ASC ' +
+      ', CASE WHEN content LIKE ''%abstract;%'' THEN 1 ELSE 0 END ASC ' +
       ', file_path ' +
       'LIMIT :max_results';
     FQuery.ParamByName('query').AsString := AQuery;
