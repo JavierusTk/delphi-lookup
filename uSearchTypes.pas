@@ -61,7 +61,39 @@ type
     procedure RemoveDuplicates;
   end;
 
+/// <summary>
+/// Rank tier for a MatchType string. Lower = better.
+/// Used by SortByRelevance to prevent FTS body-hits from outranking name-based
+/// hits when both results are non-exact declarations and a TF-heavy procedure
+/// body inflates the content similarity score above a legitimate prefix/partial
+/// name match (e.g. a 5 KB orphan procedure that mentions "ModoRaw" four times
+/// outranking the property whose name actually contains "ModoRaw").
+/// </summary>
+function MatchPriority(const AMatchType: string): Integer;
+
 implementation
+
+function MatchPriority(const AMatchType: string): Integer;
+begin
+  if (AMatchType = 'exact_name') or (AMatchType = 'definition') then
+    Result := 0
+  else if AMatchType = 'prefix_name' then
+    Result := 1
+  else if AMatchType = 'partial_name' then
+    Result := 2
+  else if AMatchType = 'fuzzy_name' then
+    Result := 3
+  else if (AMatchType = 'full_text_fts5') or (AMatchType = 'full_text') then
+    Result := 4
+  else if AMatchType = 'vector_similarity' then
+    Result := 5
+  else if AMatchType = 'semantic' then
+    Result := 6
+  else if AMatchType = 'reference' then
+    Result := 7
+  else
+    Result := 99;
+end;
 
 { TSearchResult }
 
@@ -79,6 +111,8 @@ procedure TSearchResultList.SortByRelevance;
 begin
   Sort(TComparer<TSearchResult>.Construct(
     function(const Left, Right: TSearchResult): Integer
+    var
+      LeftPriority, RightPriority: Integer;
     begin
       // Exact matches first
       if Left.IsExactMatch and not Right.IsExactMatch then
@@ -92,8 +126,18 @@ begin
         Result := 1
       else
       begin
-        // Then by score (higher is better)
-        if Left.Score > Right.Score then
+        // Name-based matches before content/semantic matches: a TF-heavy
+        // procedure body that mentions the query (full_text_fts5, score 1.0)
+        // must not beat a prefix/partial name match (score 0.9/0.8) just
+        // because raw similarity is higher.
+        LeftPriority := MatchPriority(Left.MatchType);
+        RightPriority := MatchPriority(Right.MatchType);
+        if LeftPriority < RightPriority then
+          Result := -1
+        else if LeftPriority > RightPriority then
+          Result := 1
+        // Same tier: by raw similarity score
+        else if Left.Score > Right.Score then
           Result := -1
         else if Left.Score < Right.Score then
           Result := 1
