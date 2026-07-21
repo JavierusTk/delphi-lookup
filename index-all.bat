@@ -69,7 +69,18 @@ call :index_folder "W:\CyberMAX"     user
 call :index_folder "W:\Almacen"      user
 call :index_folder "W:\TCConta"      user
 call :index_folder "W:\Gestion2000"  user
-call :index_folder "W:\Produccion"   user
+REM La carpeta real en disco lleva tilde en la "o" (Produccion -> Producci*n).
+REM No la escribimos literal: cmd lee el .bat en codepage OEM y este fichero es
+REM UTF-8, asi que una ruta acentuada literal no resolveria. La expandimos por
+REM comodin (? = 1 caracter). El comodin amplio "Produc*" NO vale: capturaria
+REM tambien W:\Produccion-CLAUDE-md.
+set "_PROD="
+for /d %%D in ("W:\Producci?n") do set "_PROD=%%~fD"
+if defined _PROD (
+    call :index_folder "!_PROD!" user
+) else (
+    echo [SKIP] not found: W:\Producci?n
+)
 call :index_folder "W:\Clientes"     user
 call :index_folder "W:\Proyectos"    user
 call :index_folder "W:\EDI"          user
@@ -83,7 +94,7 @@ echo.
 echo [THIRD_PARTY] Indexing Third-Party Libraries...
 echo ----------------------------------------------------------------------------
 
-call :index_folder "W:\Public\mORMot2"          third_party
+call :index_folder "W:\mORMot2"                 third_party
 call :index_folder "W:\HCL"                     third_party
 call :index_folder "W:\OXml"                    third_party
 call :index_folder "W:\DragDropSuite"           third_party
