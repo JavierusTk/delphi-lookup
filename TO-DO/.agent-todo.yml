@@ -1,0 +1,3 @@
+# agent-todo registry config — tool: /mnt/w/agent-todo
+schema: agent-todo/v1
+repo_id: delphi-lookup
