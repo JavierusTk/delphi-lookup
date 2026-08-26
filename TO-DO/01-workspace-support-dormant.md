@@ -1,4 +1,11 @@
-﻿# 01 — Decidir qué hacer con `Workspace.Support.pas` (durmiente)
+﻿---
+priority: baja
+scope: Public/delphi-lookup/Workspace.Support.pas (durmiente) + delphi-lookup.dproj
+  + uResultFormatter.pas (si se integra)
+status: open
+type: idea
+---
+# 01 — Decidir qué hacer con `Workspace.Support.pas` (durmiente)
 
 **Estado:** archivo presente en el repo, **no referenciado por ningún proyecto**
 (`delphi-lookup.dpr`/`.dproj` ni `delphi-indexer.*` lo incluyen) → no se compila, es
