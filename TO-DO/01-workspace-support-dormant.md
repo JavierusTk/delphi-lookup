@@ -1,9 +1,12 @@
 ﻿---
+effort: small
 priority: baja
+risk: low
 scope: Public/delphi-lookup/Workspace.Support.pas (durmiente) + delphi-lookup.dproj
   + uResultFormatter.pas (si se integra)
 status: open
 type: idea
+value: low
 ---
 # 01 — Decidir qué hacer con `Workspace.Support.pas` (durmiente)
 
