@@ -51,6 +51,12 @@ chm_cache_*/
 *.temp
 *.bak
 *.log
+# ...salvo el rastro de autorizaciones del registro TO-DO/, que NO es un
+# artefacto de runtime: es la evidencia de quién autorizó qué item para
+# automatización (agent-todo greenlight/hold escriben ahí actor= y head=).
+# Sin esta excepción el log vive solo en el working tree de una máquina y,
+# de paso, 'greenlight --commit' falla al intentar añadirlo (agent-todo:T-YZVP).
+!TO-DO/GREENLIGHT.log
 
 # -----------------------------------------------------------------------------
 # IDE and editor files
