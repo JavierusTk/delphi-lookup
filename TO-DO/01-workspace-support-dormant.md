@@ -1,12 +1,19 @@
 ﻿---
 effort: small
+id: 01-workspace-support-dormant
 priority: baja
+proposal: 'Decidir el destino de Workspace.Support.pas, hoy código durmiente que ningún
+  proyecto referencia (ni delphi-lookup.dpr/.dproj ni delphi-indexer.*): integrarlo
+  (con uResultFormatter.pas) o borrarlo. Procede de un stash recuperado el 2026-06-19
+  cuyo análisis lo dio ~95% obsoleto.'
 risk: low
 scope: Public/delphi-lookup/Workspace.Support.pas (durmiente) + delphi-lookup.dproj
   + uResultFormatter.pas (si se integra)
 status: open
 type: idea
 value: low
+verification: O el fichero está incluido en el .dproj y compila, o ha desaparecido
+  del repo; en ambos casos con la razón registrada.
 ---
 # 01 — Decidir qué hacer con `Workspace.Support.pas` (durmiente)
 
@@ -64,3 +71,10 @@ añadiendo una línea `// Path:`; más `uses` en `delphi-lookup.dpr` y dar de al
 
 Al resolver: implementar la opción elegida, borrar este `.md` y actualizar el índice
 en `TO-DO/CLAUDE.md`.
+
+<!-- agent-todo:history:start -->
+### Histórico
+
+- 2026-08-27 · proposal fijada · actor=reviewer · pase de revisión 2026-08-27: proposal/verification redactadas desde la cápsula del propio item; sin ellas el item es autorizable pero no accionable por el autopilot
+- 2026-08-27 · verification fijada · actor=reviewer · pase de revisión 2026-08-27: proposal/verification redactadas desde la cápsula del propio item; sin ellas el item es autorizable pero no accionable por el autopilot
+<!-- agent-todo:history:end -->
