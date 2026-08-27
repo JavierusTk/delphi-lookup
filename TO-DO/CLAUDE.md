@@ -11,5 +11,5 @@ para que no se pierdan entre sesiones.
   Decidir: integrarla, retirarla, o dejarla.
 
 <!-- agent-todo:index:start -->
-- [delphi-lookup:01-workspace-support-dormant] `archivo presente en el repo, no…` — 01 — Decidir qué hacer con `Workspace.Support.pas` (durmiente)
+- [delphi-lookup:01-workspace-support-dormant] `open` — 01 — Decidir qué hacer con `Workspace.Support.pas` (durmiente)
 <!-- agent-todo:index:end -->
