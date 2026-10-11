@@ -291,7 +291,7 @@ delphi-indexer.exe "C:\Projects\MyApplication" --category user
 delphi-indexer.exe "C:\...\source\vcl" --category stdlib --framework VCL
 ```
 
-**Use `reposcan.bat`** for automated batch indexing.
+**Use `index-all.bat [--force]`** for automated batch indexing (rebuilds `delphi_symbols.db` from all configured source folders plus the CHM docs).
 
 ## Performance
 
