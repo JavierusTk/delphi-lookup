@@ -103,7 +103,6 @@ type
 
     // File content processing
     function ProcessPascalFile(const AFilePath: string): string;
-    function TruncateAtImplementation(const AContent: string): string;
   public
     constructor Create(AIncludeImplementation: Boolean = False);
     destructor Destroy; override;
@@ -139,6 +138,9 @@ type
   end;
 
 implementation
+
+uses
+  uFolderScanner;
 
 { TParallelParsedFile }
 
@@ -510,52 +512,6 @@ begin
       WriteLn(Format('[ERROR] Reading file %s: %s', [AFilePath, E.Message]));
       Result := '';
     end;
-  end;
-end;
-
-function TParallelFolderScanner.TruncateAtImplementation(const AContent: string): string;
-var
-  Lines: TStringList;
-  I: Integer;
-  TrimmedLine, UpperLine: string;
-  ConditionalDepth: Integer;
-begin
-  Result := AContent; // Default to full content if no implementation found
-
-  Lines := TStringList.Create;
-  try
-    Lines.Text := AContent;
-    ConditionalDepth := 0;
-
-    for I := 0 to Lines.Count - 1 do
-    begin
-      TrimmedLine := Trim(Lines[I]);
-      UpperLine := UpperCase(TrimmedLine);
-
-      // Track conditional depth to avoid truncating inside {$IFDEF} blocks
-      if (Pos('{$IFDEF ', UpperLine) > 0) or (Pos('{$IFNDEF ', UpperLine) > 0) or
-         (Pos('{$IF ', UpperLine) > 0) or (Pos('{$IFOPT ', UpperLine) > 0) then
-        Inc(ConditionalDepth)
-      else if (Pos('{$ENDIF', UpperLine) > 0) or (Pos('{$IFEND', UpperLine) > 0) then
-        Dec(ConditionalDepth);
-
-      // Check if this line contains only "implementation" (case-insensitive)
-      // Only truncate if we're NOT inside a conditional block
-      if SameText(TrimmedLine, 'implementation') and (ConditionalDepth = 0) then
-      begin
-        // Found implementation at top level - keep it but add minimal ending
-        while Lines.Count > I + 1 do
-          Lines.Delete(I + 1);
-
-        Lines.Add('');
-        Lines.Add('end.');
-        Result := Lines.Text;
-        Break;
-      end;
-    end;
-
-  finally
-    Lines.Free;
   end;
 end;
 

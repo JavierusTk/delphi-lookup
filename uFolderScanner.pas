@@ -22,7 +22,6 @@ type
   private
     FIncludeImplementation: Boolean;
     function ProcessPascalFile(const AFilePath: string): string;
-    function TruncateAtImplementation(const AContent: string): string;
     function ShouldExcludeFolder(const AFolderPath: string): Boolean;
     function ShouldExcludeFile(const AFilePath: string): Boolean;
     function HasNoIndexFile(const AFolderPath: string): Boolean;
@@ -34,6 +33,12 @@ type
     /// If False (default), truncates at 'implementation' keyword for FTS-only indexing.</summary>
     property IncludeImplementation: Boolean read FIncludeImplementation write FIncludeImplementation;
   end;
+
+/// <summary>Cuts a unit after its top-level 'implementation' line for FTS-only
+/// indexing. The single copy for every indexing path (both scanners and the
+/// incremental mode): when they disagreed, an incremental pass dropped the
+/// implementation symbols that --force had indexed.</summary>
+function TruncateAtImplementation(const AContent: string): string;
 
 implementation
 
@@ -242,7 +247,7 @@ begin
   end;
 end;
 
-function TFolderScanner.TruncateAtImplementation(const AContent: string): string;
+function TruncateAtImplementation(const AContent: string): string;
 var
   Lines: TStringList;
   I: Integer;

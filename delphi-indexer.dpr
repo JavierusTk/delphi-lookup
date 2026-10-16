@@ -1834,30 +1834,9 @@ begin
             FileLines.Free;
           end;
 
-          // Truncate at implementation if not including full content
+          // FTS-only mode: same truncation as the --force scanners
           if EmbeddingURL = '' then
-          begin
-            // FTS-only mode: truncate at implementation
-            var Lines := TStringList.Create;
-            try
-              Lines.Text := FileContent;
-              for var J := 0 to Lines.Count - 1 do
-              begin
-                if SameText(Trim(Lines[J]), 'implementation') then
-                begin
-                  // Keep only interface section
-                  while Lines.Count > J + 1 do
-                    Lines.Delete(J + 1);
-                  Lines.Add('');
-                  Lines.Add('end.');
-                  FileContent := Lines.Text;
-                  Break;
-                end;
-              end;
-            finally
-              Lines.Free;
-            end;
-          end;
+            FileContent := TruncateAtImplementation(FileContent);
 
           ParsedFile := TParsedFile.Create(FilePath, Trim(FileContent));
           ParsedFiles.AddObject(FilePath, ParsedFile);
