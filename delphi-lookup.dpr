@@ -13,6 +13,7 @@
 {$R *.res}
 
 uses
+  Winapi.Windows,
   System.SysUtils,
   System.Classes,
   System.IOUtils,
@@ -1220,7 +1221,19 @@ begin
   end;
 end;
 
+procedure UseUtf8WhenRedirected;
 begin
+  // T-67W7: redirected output (agents, pipes, files) leaves in the ANSI code
+  // page by default, which turns → into ? and ñ into a lone 0xF1 byte that a
+  // UTF-8 reader cannot decode. A real console keeps the RTL default.
+  if GetFileType(GetStdHandle(STD_OUTPUT_HANDLE)) <> FILE_TYPE_CHAR then
+    SetTextCodePage(Output, CP_UTF8);
+  if GetFileType(GetStdHandle(STD_ERROR_HANDLE)) <> FILE_TYPE_CHAR then
+    SetTextCodePage(ErrOutput, CP_UTF8);
+end;
+
+begin
+  UseUtf8WhenRedirected;
   try
     if ParseCommandLine then
       PerformSearch;
