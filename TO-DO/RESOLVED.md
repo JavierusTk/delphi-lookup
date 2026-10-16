@@ -23,4 +23,26 @@ Tombstones for resolved TO-DO items (machine-readable; read by `agent-todo lint`
   title: 'El texto llega a SQLite como cp1252 con best-fit: símbolos y letras no latinas
     se pierden en delphi_symbols.db'
   uid: delphi-lookup:T-67W7
+- commit: 818f4ba
+  note: 'Hecho y desplegado el 2026-10-16. 818f4ba: TruncateAtImplementation cuenta
+    las condicionales por directiva (ScanConditionals). {$ifdef}..{$endif} en una
+    misma línea suma cero; los comentarios { } y (* *) se siguen entre líneas; se
+    ignora lo que parece directiva dentro de cadenas o tras //; la profundidad nunca
+    baja de cero; y una línea ''implementation'' dentro de un comentario ya no corta.
+    La marca pasa a metadata.index_format v2 (MigrateIndexFormat), de modo que las
+    bases en v0/v1 se reindexan enteras en su siguiente pasada. Tests/test-truncation.ps1
+    da 8/8 y el indexer anterior falla 3 de los 6 casos de truncado. Antes de desplegar,
+    simulación de la pasada nocturna sobre una copia de la base: sale la implementación
+    de 283 ficheros (-45.532 símbolos); entran 9 unidades que tenían 0 símbolos (+17.452:
+    Winapi.Windows 13.594, Vcl.Forms, System, System.Threading…); 1.951 símbolos de
+    interfaz pasan a la línea correcta; 46 símbolos de interfaz en ramas {$IFDEF}
+    desaparecen. El usuario eligió desplegar y reindexar. W:\bin 5f2b54a. Base de
+    PT-JAVI reindexada (37 min): index_format=2, 743.173 símbolos, Winapi.Windows
+    con 13.594, TableMax.low.pas con 9 y ParserCore.pas cortado en la línea 284. CreateFileW
+    ya encuentra Winapi.Windows (antes, solo el wrapper de ZipForge) y TThread sale
+    en la línea 1815, la real.'
+  resolved_at: '2026-10-16'
+  title: TruncateAtImplementation pierde la cuenta con las condicionales de una línea
+    y no trunca el fichero
+  uid: delphi-lookup:T-5AF2
 <!-- agent-todo:resolved:end -->

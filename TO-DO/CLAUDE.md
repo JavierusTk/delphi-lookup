@@ -12,6 +12,5 @@ para que no se pierdan entre sesiones.
 
 <!-- agent-todo:index:start -->
 - [delphi-lookup:01-workspace-support-dormant] `open` — 01 — Decidir qué hacer con `Workspace.Support.pas` (durmiente)
-- [delphi-lookup:T-5AF2] `sin status` — TruncateAtImplementation pierde la cuenta con las condicionales de una línea y no trunca el fichero
 - [delphi-lookup:T-DSYA] `sin status` — delphi_symbols.db conserva símbolos de carpetas que ya no existen y ningún pase los purga
 <!-- agent-todo:index:end -->
