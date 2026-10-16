@@ -1732,8 +1732,8 @@ begin
 
     WriteLn(Format('  Connected in %d ms', [StepStopwatch.ElapsedMilliseconds]));
 
-    // T-67W7: must run before DetectChanges reads the stored hashes
-    TDatabaseBuilder.MigrateTextEncoding(Connection);
+    // Must run before DetectChanges reads the stored hashes
+    TDatabaseBuilder.MigrateIndexFormat(Connection);
 
     // Step 2: Detect changes using TChangeDetector
     WriteLn('Step 2: Detecting changes (Merkle-style)...');

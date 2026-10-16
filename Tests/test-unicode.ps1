@@ -8,7 +8,7 @@
 #   2. Indexing Tests\fixtures\unicode keeps tau, arrow, >= and the check-mark
 #      emoji in symbols.content and symbols.comments, with no '?' standing in
 #   3. delphi-lookup prints them intact through a pipe (UTF-8)
-#   4. A database written by an older indexer (no metadata.text_encoding) is
+#   4. A database written by an older indexer (no metadata.index_format) is
 #      reindexed by the next incremental pass, without --force
 #
 # Usage: Tests\test-unicode.ps1 [-BinDir <dir with delphi-indexer.exe and delphi-lookup.exe>]
@@ -92,13 +92,13 @@ try {
         $lookupOut.Contains("$tau $arrow $ge $checkMark")
     }
 
-    # 4. Legacy database: drop the marker and degrade the text. The stored
+    # 4. Legacy database: drop the markers and degrade the text. The stored
     #    hashes are still the real ones, so without the migration the pass
     #    would see no changes.
-    Sql "UPDATE symbols SET content = replace(content, char(964), 't'); DELETE FROM metadata WHERE key = 'text_encoding';" | Out-Null
+    Sql "UPDATE symbols SET content = replace(content, char(964), 't'); DELETE FROM metadata WHERE key IN ('text_encoding', 'index_format');" | Out-Null
     $incOut = & $indexer $fixture --no-config --database $db --category user 2>&1 | Out-String
-    Assert-Test 'incremental pass runs the text-encoding migration' {
-        $incOut -match 'Text encoding migration \(T-67W7\)'
+    Assert-Test 'incremental pass runs the index-format migration from v0' {
+        $incOut -match 'Index format migration \(v0 -> v\d+\)'
     }
     Assert-Test 'incremental pass reprocesses the unchanged file' {
         $incOut -match 'Changed files: 1'

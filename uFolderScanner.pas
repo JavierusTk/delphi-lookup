@@ -247,13 +247,91 @@ begin
   end;
 end;
 
+type
+  TCommentState = (csNone, csBrace, csParen);
+
+/// <summary>Scans one line, carrying the comment state across lines, and
+/// applies every conditional directive on it to ADepth: +1 per {$IF},
+/// {$IFDEF}, {$IFNDEF}, {$IFOPT}; -1 per {$ENDIF}, {$IFEND}; (*$...*) too.
+/// Counting per directive, not per line, keeps '{$ifdef X}..{$endif}' on one
+/// line at net zero. Directive-like text inside comments, string literals or
+/// after // is ignored.</summary>
+procedure ScanConditionals(const ALine: string; var AState: TCommentState;
+  var ADepth: Integer);
+var
+  I, NameStart, Len: Integer;
+  Name: string;
+begin
+  Len := Length(ALine);
+  I := 1;
+  while I <= Len do
+  begin
+    case AState of
+      csBrace:
+        begin
+          if ALine[I] = '}' then
+            AState := csNone;
+          Inc(I);
+        end;
+      csParen:
+        begin
+          if (ALine[I] = '*') and (I < Len) and (ALine[I + 1] = ')') then
+          begin
+            AState := csNone;
+            Inc(I);
+          end;
+          Inc(I);
+        end;
+    else
+      if ALine[I] = '''' then
+      begin
+        // String literal: runs to the next quote ('' is two adjacent literals)
+        Inc(I);
+        while (I <= Len) and (ALine[I] <> '''') do
+          Inc(I);
+        Inc(I);
+      end
+      else if (ALine[I] = '/') and (I < Len) and (ALine[I + 1] = '/') then
+        Break
+      else if (ALine[I] = '{') or ((ALine[I] = '(') and (I < Len) and (ALine[I + 1] = '*')) then
+      begin
+        if ALine[I] = '{' then
+        begin
+          AState := csBrace;
+          Inc(I);
+        end
+        else
+        begin
+          AState := csParen;
+          Inc(I, 2);
+        end;
+
+        if (I <= Len) and (ALine[I] = '$') then
+        begin
+          NameStart := I + 1;
+          I := NameStart;
+          while (I <= Len) and CharInSet(ALine[I], ['A'..'Z', 'a'..'z']) do
+            Inc(I);
+          Name := UpperCase(Copy(ALine, NameStart, I - NameStart));
+          if (Name = 'IF') or (Name = 'IFDEF') or (Name = 'IFNDEF') or (Name = 'IFOPT') then
+            Inc(ADepth)
+          else if ((Name = 'ENDIF') or (Name = 'IFEND')) and (ADepth > 0) then
+            Dec(ADepth);
+          // The rest of the directive is skipped as comment text
+        end;
+      end
+      else
+        Inc(I);
+    end;
+  end;
+end;
+
 function TruncateAtImplementation(const AContent: string): string;
 var
   Lines: TStringList;
   I: Integer;
-  Line: string;
-  TrimmedLine, UpperLine: string;
   ConditionalDepth: Integer;
+  State: TCommentState;
 begin
   Result := AContent; // Default to full content if no implementation found
 
@@ -261,29 +339,14 @@ begin
   try
     Lines.Text := AContent;
     ConditionalDepth := 0;
+    State := csNone;
 
     for I := 0 to Lines.Count - 1 do
     begin
-      Line := Lines[I];
-      TrimmedLine := Trim(Line);
-      UpperLine := UpperCase(TrimmedLine);
-
-      // Track conditional depth to avoid truncating inside {$IFDEF} blocks
-      // This handles patterns like: {$ifdef OSPOSIX} implementation {$else} ... {$endif}
-      if (Pos('{$IFDEF ', UpperLine) > 0) or (Pos('{$IFNDEF ', UpperLine) > 0) or
-         (Pos('{$IF ', UpperLine) > 0) or (Pos('{$IFOPT ', UpperLine) > 0) then
-        Inc(ConditionalDepth)
-      else if (Pos('{$ENDIF', UpperLine) > 0) or (Pos('{$IFEND', UpperLine) > 0) then
-        Dec(ConditionalDepth)
-      else if Pos('{$ELSE', UpperLine) > 0 then
-      begin
-        // {$ELSE} toggles but doesn't change depth
-        // We're still inside a conditional block
-      end;
-
-      // Check if this line contains only "implementation" (case-insensitive)
-      // Only truncate if we're NOT inside a conditional block
-      if SameText(TrimmedLine, 'implementation') and (ConditionalDepth = 0) then
+      // A line holding only "implementation", outside any comment and any
+      // conditional block, ends the interface section
+      if (State = csNone) and (ConditionalDepth = 0) and
+         SameText(Trim(Lines[I]), 'implementation') then
       begin
         // Found implementation at top level - keep it but add minimal ending
         while Lines.Count > I + 1 do
@@ -294,6 +357,8 @@ begin
         Result := Lines.Text;
         Break;
       end;
+
+      ScanConditionals(Lines[I], State, ConditionalDepth);
     end;
 
   finally

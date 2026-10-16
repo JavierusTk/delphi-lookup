@@ -205,12 +205,13 @@ type
     /// so overloaded symbols at different lines no longer overwrite each other.</summary>
     procedure MigrateUniqueConstraintForOverloads;
 
-    /// <summary>T-67W7: databases written before text was bound as UTF-16 hold
-    /// cp1252 best-fit text (τ→t, →→?). Clears the stored file/folder hashes so
-    /// the next incremental pass of each folder reindexes it, then marks
-    /// metadata.text_encoding. Class method: the incremental flow must run it on
-    /// its own connection BEFORE change detection reads those hashes.</summary>
-    class procedure MigrateTextEncoding(AConnection: TFDConnection);
+    /// <summary>When metadata.index_format is older than INDEX_FORMAT (see its
+    /// history: cp1252 text before T-67W7, per-line conditional count before
+    /// T-5AF2), clears the stored file/folder hashes so the next incremental
+    /// pass of each folder reindexes it, then stores the current format. Class
+    /// method: the incremental flow must run it on its own connection BEFORE
+    /// change detection reads those hashes.</summary>
+    class procedure MigrateIndexFormat(AConnection: TFDConnection);
 
     /// <summary>Insert symbol with documentation fields (for CHM indexing)</summary>
     procedure InsertSymbol(const AName, AFullName, AType, AFilePath, AContent: string;
@@ -2131,8 +2132,8 @@ begin
   // so overloaded symbols at different lines coexist instead of overwriting each other.
   MigrateUniqueConstraintForOverloads;
 
-  // T-67W7: invalidate hashes of databases whose text was stored cp1252-degraded
-  MigrateTextEncoding(FConnection);
+  // Invalidate hashes of databases indexed with an older content format
+  MigrateIndexFormat(FConnection);
 end;
 
 procedure TDatabaseBuilder.MigrateQueryLogToCache;
@@ -2482,10 +2483,20 @@ begin
   WriteLn('that were previously collapsed (e.g., TableMax.Query.pas''s 4 CrearQuery overloads).');
 end;
 
-class procedure TDatabaseBuilder.MigrateTextEncoding(AConnection: TFDConnection);
+const
+  /// Version of the indexed content, stored in metadata.index_format. Bump it
+  /// whenever a change alters what gets stored for an unchanged file, so the
+  /// next incremental pass reindexes every database built before it.
+  ///   0: text bound as AnsiString, degraded to cp1252 best-fit
+  ///   1: text bound as UTF-16 (T-67W7; also marked text_encoding='utf16')
+  ///   2: TruncateAtImplementation counts conditionals per directive (T-5AF2)
+  INDEX_FORMAT = 2;
+
+class procedure TDatabaseBuilder.MigrateIndexFormat(AConnection: TFDConnection);
 var
   Query: TFDQuery;
   OwnTransaction: Boolean;
+  StoredFormat: Integer;
 
   function Exists(const ASQL: string): Boolean;
   begin
@@ -2510,7 +2521,25 @@ begin
 
     if not Exists('SELECT 1 FROM sqlite_master WHERE type=''table'' AND name=''metadata''') then
       Exit; // No metadata yet: CreateTables runs first and the next call marks it
-    if Exists('SELECT 1 FROM metadata WHERE key=''text_encoding'' AND value=''utf16''') then
+
+    Query.Open('SELECT value FROM metadata WHERE key=''index_format''');
+    try
+      if Query.Eof then
+        StoredFormat := -1
+      else
+        StoredFormat := StrToIntDef(Query.Fields[0].AsString, 0);
+    finally
+      Query.Close;
+    end;
+    if StoredFormat < 0 then
+    begin
+      // Databases from before index_format existed
+      if Exists('SELECT 1 FROM metadata WHERE key=''text_encoding'' AND value=''utf16''') then
+        StoredFormat := 1
+      else
+        StoredFormat := 0;
+    end;
+    if StoredFormat >= INDEX_FORMAT then
       Exit;
 
     OwnTransaction := not AConnection.InTransaction;
@@ -2522,7 +2551,8 @@ begin
       if Exists('SELECT 1 FROM sqlite_master WHERE type=''table'' AND name=''symbols''') and
          Exists('SELECT 1 FROM symbols LIMIT 1') then
       begin
-        WriteLn('Text encoding migration (T-67W7): stored text is cp1252-degraded;');
+        WriteLn(Format('Index format migration (v%d -> v%d): stored content is outdated;',
+          [StoredFormat, INDEX_FORMAT]));
         WriteLn('  clearing file/folder hashes so incremental passes reindex everything.');
         if Exists('SELECT 1 FROM sqlite_master WHERE type=''table'' AND name=''indexed_files''') then
           Exec('UPDATE indexed_files SET file_hash = ''''');
@@ -2533,6 +2563,8 @@ begin
       end;
 
       Exec('INSERT OR REPLACE INTO metadata (key, value) VALUES (''text_encoding'', ''utf16'')');
+      Exec(Format('INSERT OR REPLACE INTO metadata (key, value) VALUES (''index_format'', ''%d'')',
+        [INDEX_FORMAT]));
 
       if OwnTransaction then
         AConnection.Commit;
