@@ -326,7 +326,7 @@ begin
       WHERE LOWER(pf.file_path) = :file_path
       LIMIT 1
     ''';
-    FQuery.ParamByName('file_path').AsString := NormalizedPath;
+    FQuery.ParamByName('file_path').AsWideString := NormalizedPath;
     FQuery.Open;
 
     if not FQuery.IsEmpty then

@@ -274,7 +274,7 @@ begin
     'SELECT folder_path, folder_hash, subfolders_list, indexed_at ' +
     'FROM indexed_folders ' +
     'WHERE folder_path LIKE :root_pattern';
-  FQuery.ParamByName('root_pattern').AsString := ARootPath + '%';
+  FQuery.ParamByName('root_pattern').AsWideString := ARootPath + '%';
   FQuery.Open;
 
   try
@@ -304,7 +304,7 @@ begin
   try
     FQuery.SQL.Text :=
       'SELECT file_path, file_hash FROM indexed_files WHERE file_path LIKE :root_pattern';
-    FQuery.ParamByName('root_pattern').AsString := ARootPath + '%';
+    FQuery.ParamByName('root_pattern').AsWideString := ARootPath + '%';
     FQuery.Open;
     UseIndexedFiles := not FQuery.Eof;  // Only use if there's data
     if not UseIndexedFiles then
@@ -320,7 +320,7 @@ begin
     try
       FQuery.SQL.Text :=
         'SELECT file_path, file_hash FROM file_hashes WHERE file_path LIKE :root_pattern';
-      FQuery.ParamByName('root_pattern').AsString := ARootPath + '%';
+      FQuery.ParamByName('root_pattern').AsWideString := ARootPath + '%';
       FQuery.Open;
     except
       // file_hashes might not exist either
@@ -709,14 +709,14 @@ begin
     try
       DeletedQuery.SQL.Text :=
         'SELECT file_path FROM indexed_files WHERE file_path LIKE :folder_pattern';
-      DeletedQuery.ParamByName('folder_pattern').AsString := NormalizedPath + '%';
+      DeletedQuery.ParamByName('folder_pattern').AsWideString := NormalizedPath + '%';
       DeletedQuery.Open;
     except
       // indexed_files might not exist, try legacy table
       DeletedQuery.Close;
       DeletedQuery.SQL.Text :=
         'SELECT file_path FROM file_hashes WHERE file_path LIKE :folder_pattern';
-      DeletedQuery.ParamByName('folder_pattern').AsString := NormalizedPath + '%';
+      DeletedQuery.ParamByName('folder_pattern').AsWideString := NormalizedPath + '%';
       DeletedQuery.Open;
     end;
 
@@ -765,7 +765,7 @@ begin
 
     // Get count of symbols to be deleted (for logging/debugging)
     CleanupQuery.SQL.Text := 'SELECT COUNT(*) as cnt FROM symbols WHERE file_path = :file_path';
-    CleanupQuery.ParamByName('file_path').AsString := AFilePath;
+    CleanupQuery.ParamByName('file_path').AsWideString := AFilePath;
     CleanupQuery.Open;
     DeletedSymbols := CleanupQuery.FieldByName('cnt').AsInteger;
     CleanupQuery.Close;
@@ -777,7 +777,7 @@ begin
         CleanupQuery.SQL.Text :=
           'DELETE FROM vec_embeddings ' +
           'WHERE symbol_id IN (SELECT id FROM symbols WHERE file_path = :file_path)';
-        CleanupQuery.ParamByName('file_path').AsString := AFilePath;
+        CleanupQuery.ParamByName('file_path').AsWideString := AFilePath;
         CleanupQuery.ExecSQL;
       except
         // vec_embeddings table might not exist in FTS5-only mode
@@ -788,7 +788,7 @@ begin
         CleanupQuery.SQL.Text :=
           'DELETE FROM symbols_fts ' +
           'WHERE rowid IN (SELECT id FROM symbols WHERE file_path = :file_path)';
-        CleanupQuery.ParamByName('file_path').AsString := AFilePath;
+        CleanupQuery.ParamByName('file_path').AsWideString := AFilePath;
         CleanupQuery.ExecSQL;
       except
         // FTS5 might not be enabled
@@ -796,14 +796,14 @@ begin
 
       // Step 3: Remove symbols
       CleanupQuery.SQL.Text := 'DELETE FROM symbols WHERE file_path = :file_path';
-      CleanupQuery.ParamByName('file_path').AsString := AFilePath;
+      CleanupQuery.ParamByName('file_path').AsWideString := AFilePath;
       CleanupQuery.ExecSQL;
     end;
 
     // Step 4: Remove from indexed_files (new schema from REQ-001)
     try
       CleanupQuery.SQL.Text := 'DELETE FROM indexed_files WHERE file_path = :file_path';
-      CleanupQuery.ParamByName('file_path').AsString := AFilePath;
+      CleanupQuery.ParamByName('file_path').AsWideString := AFilePath;
       CleanupQuery.ExecSQL;
     except
       // indexed_files table might not exist in older schemas
@@ -812,7 +812,7 @@ begin
     // Step 5: Remove from file_hashes (legacy schema for backwards compatibility)
     try
       CleanupQuery.SQL.Text := 'DELETE FROM file_hashes WHERE file_path = :file_path';
-      CleanupQuery.ParamByName('file_path').AsString := AFilePath;
+      CleanupQuery.ParamByName('file_path').AsWideString := AFilePath;
       CleanupQuery.ExecSQL;
     except
       // file_hashes table might not exist
@@ -845,7 +845,7 @@ begin
     FQuery.SQL.Text :=
       'DELETE FROM vec_embeddings WHERE symbol_id IN ' +
       '(SELECT id FROM symbols WHERE file_path LIKE :pattern)';
-    FQuery.ParamByName('pattern').AsString := FolderPattern;
+    FQuery.ParamByName('pattern').AsWideString := FolderPattern;
     FQuery.ExecSQL;
   except
     // vec_embeddings might not exist in FTS5-only mode, ignore
@@ -856,7 +856,7 @@ begin
     FQuery.SQL.Text :=
       'DELETE FROM symbols_fts WHERE rowid IN ' +
       '(SELECT id FROM symbols WHERE file_path LIKE :pattern)';
-    FQuery.ParamByName('pattern').AsString := FolderPattern;
+    FQuery.ParamByName('pattern').AsWideString := FolderPattern;
     FQuery.ExecSQL;
   except
     // FTS5 might not be enabled, ignore
@@ -864,14 +864,14 @@ begin
 
   // Step 3: Delete symbols
   FQuery.SQL.Text := 'DELETE FROM symbols WHERE file_path LIKE :pattern';
-  FQuery.ParamByName('pattern').AsString := FolderPattern;
+  FQuery.ParamByName('pattern').AsWideString := FolderPattern;
   FQuery.ExecSQL;
   ADeletedSymbols := FQuery.RowsAffected;
 
   // Step 4: Delete indexed_files (new table from REQ-001)
   try
     FQuery.SQL.Text := 'DELETE FROM indexed_files WHERE folder_path LIKE :pattern';
-    FQuery.ParamByName('pattern').AsString := FolderPattern;
+    FQuery.ParamByName('pattern').AsWideString := FolderPattern;
     FQuery.ExecSQL;
     ADeletedFiles := FQuery.RowsAffected;
   except
@@ -879,7 +879,7 @@ begin
     // Try file_hashes as fallback (legacy table)
     try
       FQuery.SQL.Text := 'DELETE FROM file_hashes WHERE file_path LIKE :pattern';
-      FQuery.ParamByName('pattern').AsString := FolderPattern;
+      FQuery.ParamByName('pattern').AsWideString := FolderPattern;
       FQuery.ExecSQL;
       ADeletedFiles := FQuery.RowsAffected;
     except
@@ -889,7 +889,7 @@ begin
 
   // Step 5: Delete indexed_folders (includes parent folder)
   FQuery.SQL.Text := 'DELETE FROM indexed_folders WHERE folder_path LIKE :pattern';
-  FQuery.ParamByName('pattern').AsString := FolderPattern;
+  FQuery.ParamByName('pattern').AsWideString := FolderPattern;
   FQuery.ExecSQL;
   ADeletedFolders := FQuery.RowsAffected;
 end;
@@ -994,8 +994,8 @@ begin
 
         FQuery.SQL.Text :=
           'UPDATE indexed_folders SET subfolders_list = :subfolders WHERE folder_path = :path';
-        FQuery.ParamByName('subfolders').AsString := JSONArray.ToJSON;
-        FQuery.ParamByName('path').AsString := NormalizedPath;
+        FQuery.ParamByName('subfolders').AsWideString := JSONArray.ToJSON;
+        FQuery.ParamByName('path').AsWideString := NormalizedPath;
         FQuery.ExecSQL;
       finally
         JSONArray.Free;

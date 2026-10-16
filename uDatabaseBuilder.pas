@@ -205,6 +205,13 @@ type
     /// so overloaded symbols at different lines no longer overwrite each other.</summary>
     procedure MigrateUniqueConstraintForOverloads;
 
+    /// <summary>T-67W7: databases written before text was bound as UTF-16 hold
+    /// cp1252 best-fit text (τ→t, →→?). Clears the stored file/folder hashes so
+    /// the next incremental pass of each folder reindexes it, then marks
+    /// metadata.text_encoding. Class method: the incremental flow must run it on
+    /// its own connection BEFORE change detection reads those hashes.</summary>
+    class procedure MigrateTextEncoding(AConnection: TFDConnection);
+
     /// <summary>Insert symbol with documentation fields (for CHM indexing)</summary>
     procedure InsertSymbol(const AName, AFullName, AType, AFilePath, AContent: string;
       const AComments, AParentClass: string; AEmbedding: TEmbedding;
@@ -814,8 +821,8 @@ end;
 procedure TDatabaseBuilder.StoreMetadata(const AKey, AValue: string);
 begin
   FQuery.SQL.Text := 'INSERT OR REPLACE INTO metadata (key, value) VALUES (:key, :value)';
-  FQuery.ParamByName('key').AsString := AKey;
-  FQuery.ParamByName('value').AsString := AValue;
+  FQuery.ParamByName('key').AsWideString := AKey;
+  FQuery.ParamByName('value').AsWideString := AValue;
   FQuery.ExecSQL;
 end;
 
@@ -835,15 +842,15 @@ begin
     (:folder_path, :indexed_at, :duration_seconds, :files_count, :chunks_count,
      :content_type, :source_category, :folder_hash, :subfolders_list)
   ''';
-  FQuery.ParamByName('folder_path').AsString := AFolderPath;
-  FQuery.ParamByName('indexed_at').AsString := FormatDateTime('yyyy-mm-dd hh:nn:ss', AEndTime);
+  FQuery.ParamByName('folder_path').AsWideString := AFolderPath;
+  FQuery.ParamByName('indexed_at').AsWideString := FormatDateTime('yyyy-mm-dd hh:nn:ss', AEndTime);
   FQuery.ParamByName('duration_seconds').AsInteger := DurationSeconds;
   FQuery.ParamByName('files_count').AsInteger := AFilesCount;
   FQuery.ParamByName('chunks_count').AsInteger := AChunksCount;
-  FQuery.ParamByName('content_type').AsString := FContentType;
-  FQuery.ParamByName('source_category').AsString := FSourceCategory;
-  FQuery.ParamByName('folder_hash').AsString := AFolderHash;
-  FQuery.ParamByName('subfolders_list').AsString := ASubfoldersList;
+  FQuery.ParamByName('content_type').AsWideString := FContentType;
+  FQuery.ParamByName('source_category').AsWideString := FSourceCategory;
+  FQuery.ParamByName('folder_hash').AsWideString := AFolderHash;
+  FQuery.ParamByName('subfolders_list').AsWideString := ASubfoldersList;
   FQuery.ExecSQL;
 
   WriteLn(Format('Recorded folder indexing: %s (%d files, %d chunks, %ds)',
@@ -892,7 +899,7 @@ begin
     begin
       // File is older than last indexing - check if it's in database
       FQuery.SQL.Text := 'SELECT 1 FROM file_hashes WHERE file_path = :file_path';
-      FQuery.ParamByName('file_path').AsString := AFilePath;
+      FQuery.ParamByName('file_path').AsWideString := AFilePath;
       FQuery.Open;
       FileExistsInDb := not FQuery.Eof;
       FQuery.Close;
@@ -911,7 +918,7 @@ begin
 
   // Stage 2: Hash Verification (for candidates)
   FQuery.SQL.Text := 'SELECT file_hash, chunk_count FROM file_hashes WHERE file_path = :file_path';
-  FQuery.ParamByName('file_path').AsString := AFilePath;
+  FQuery.ParamByName('file_path').AsWideString := AFilePath;
   FQuery.Open;
 
   try
@@ -959,7 +966,7 @@ begin
   try
     // Get count of symbols to be deleted (for reporting)
     FQuery.SQL.Text := 'SELECT COUNT(*) as cnt FROM symbols WHERE file_path = :file_path';
-    FQuery.ParamByName('file_path').AsString := AFilePath;
+    FQuery.ParamByName('file_path').AsWideString := AFilePath;
     FQuery.Open;
     DeletedSymbols := FQuery.FieldByName('cnt').AsInteger;
     FQuery.Close;
@@ -977,7 +984,7 @@ begin
         SELECT id FROM symbols WHERE file_path = :file_path
       )
     ''';
-    FQuery.ParamByName('file_path').AsString := AFilePath;
+    FQuery.ParamByName('file_path').AsWideString := AFilePath;
     FQuery.ExecSQL;
 
     // Remove FTS entries BEFORE symbols (subquery needs symbols table)
@@ -988,7 +995,7 @@ begin
           SELECT id FROM symbols WHERE file_path = :file_path
         )
       ''';
-      FQuery.ParamByName('file_path').AsString := AFilePath;
+      FQuery.ParamByName('file_path').AsWideString := AFilePath;
       FQuery.ExecSQL;
     except
       // FTS5 might not be enabled, ignore errors
@@ -996,12 +1003,12 @@ begin
 
     // Remove symbols (after FTS and embeddings are cleaned up)
     FQuery.SQL.Text := 'DELETE FROM symbols WHERE file_path = :file_path';
-    FQuery.ParamByName('file_path').AsString := AFilePath;
+    FQuery.ParamByName('file_path').AsWideString := AFilePath;
     FQuery.ExecSQL;
 
     // Remove hash entry
     FQuery.SQL.Text := 'DELETE FROM file_hashes WHERE file_path = :file_path';
-    FQuery.ParamByName('file_path').AsString := AFilePath;
+    FQuery.ParamByName('file_path').AsWideString := AFilePath;
     FQuery.ExecSQL;
 
   except
@@ -1030,10 +1037,10 @@ begin
       VALUES
         (:file_path, :file_hash, :file_size, :last_indexed, :chunk_count)
     ''';
-    FQuery.ParamByName('file_path').AsString := AFilePath;
-    FQuery.ParamByName('file_hash').AsString := AFileHash;
+    FQuery.ParamByName('file_path').AsWideString := AFilePath;
+    FQuery.ParamByName('file_hash').AsWideString := AFileHash;
     FQuery.ParamByName('file_size').AsInteger := FileSize;
-    FQuery.ParamByName('last_indexed').AsString := FormatDateTime('yyyy-mm-dd hh:nn:ss', Now);
+    FQuery.ParamByName('last_indexed').AsWideString := FormatDateTime('yyyy-mm-dd hh:nn:ss', Now);
     FQuery.ParamByName('chunk_count').AsInteger := AChunkCount;
     FQuery.ExecSQL;
 
@@ -1047,7 +1054,7 @@ end;
 function TDatabaseBuilder.GetFolderLastIndexed(const AFolderPath: string): TDateTime;
 begin
   FQuery.SQL.Text := 'SELECT indexed_at FROM indexed_folders WHERE folder_path = :folder_path';
-  FQuery.ParamByName('folder_path').AsString := AFolderPath;
+  FQuery.ParamByName('folder_path').AsWideString := AFolderPath;
   FQuery.Open;
 
   try
@@ -1149,8 +1156,8 @@ begin
       VALUES (:rowid, :name, :full_name, :content, :comments)
     ''';
     FQuery.ParamByName('rowid').AsInteger := ASymbolID;
-    FQuery.ParamByName('name').AsString := AName;
-    FQuery.ParamByName('full_name').AsString := AFullName;
+    FQuery.ParamByName('name').AsWideString := AName;
+    FQuery.ParamByName('full_name').AsWideString := AFullName;
     FQuery.ParamByName('content').AsWideMemo := AContent;
     FQuery.ParamByName('comments').AsWideMemo := AComments;
     FQuery.ExecSQL;
@@ -1246,21 +1253,21 @@ begin
     ''';
 
     // Truncate name fields to avoid FireDAC "Too long identifier" error (> 255)
-    FQuery.ParamByName('name').AsString := Copy(AName, 1, 255);
-    FQuery.ParamByName('full_name').AsString := Copy(AFullName, 1, 500);
-    FQuery.ParamByName('type').AsString := AType;
-    FQuery.ParamByName('file_path').AsString := AFilePath;
+    FQuery.ParamByName('name').AsWideString := Copy(AName, 1, 255);
+    FQuery.ParamByName('full_name').AsWideString := Copy(AFullName, 1, 500);
+    FQuery.ParamByName('type').AsWideString := AType;
+    FQuery.ParamByName('file_path').AsWideString := AFilePath;
     // Use AsWideMemo for large text fields to avoid FireDAC identifier length issues
     FQuery.ParamByName('content').AsWideMemo := AContent;
     FQuery.ParamByName('comments').AsWideMemo := AComments;
-    FQuery.ParamByName('parent_class').AsString := AParentClass;
-    FQuery.ParamByName('content_type').AsString := FContentType;
-    FQuery.ParamByName('source_category').AsString := FSourceCategory;
+    FQuery.ParamByName('parent_class').AsWideString := AParentClass;
+    FQuery.ParamByName('content_type').AsWideString := FContentType;
+    FQuery.ParamByName('source_category').AsWideString := FSourceCategory;
 
     // Documentation fields
     // FireDAC requires DataType before Clear for nullable parameters
     if AFramework <> '' then
-      FQuery.ParamByName('framework').AsString := AFramework
+      FQuery.ParamByName('framework').AsWideString := AFramework
     else
     begin
       FQuery.ParamByName('framework').DataType := ftString;
@@ -1268,7 +1275,7 @@ begin
     end;
 
     if APlatforms <> '' then
-      FQuery.ParamByName('platforms').AsString := APlatforms
+      FQuery.ParamByName('platforms').AsWideString := APlatforms
     else
     begin
       FQuery.ParamByName('platforms').DataType := ftString;
@@ -1276,7 +1283,7 @@ begin
     end;
 
     if ADelphiVersion <> '' then
-      FQuery.ParamByName('delphi_version').AsString := ADelphiVersion
+      FQuery.ParamByName('delphi_version').AsWideString := ADelphiVersion
     else
     begin
       FQuery.ParamByName('delphi_version').DataType := ftString;
@@ -1287,7 +1294,7 @@ begin
     FQuery.ParamByName('is_declaration').AsInteger := 1;
 
     // Set content hash for cache validation
-    FQuery.ParamByName('content_hash').AsString := ContentHash;
+    FQuery.ParamByName('content_hash').AsWideString := ContentHash;
 
     FQuery.ExecSQL;
 
@@ -1328,9 +1335,9 @@ begin
       FQuery.SQL.Text := 'INSERT INTO vec_embeddings (symbol_id, chunk_id, embedding_text, embedding) ' +
                          'VALUES (:symbol_id, :chunk_id, :embedding_text, :embedding)';
       FQuery.ParamByName('symbol_id').AsInteger := SymbolID;
-      FQuery.ParamByName('chunk_id').AsString := AEmbedding.ChunkID;
-      FQuery.ParamByName('embedding_text').AsString := AEmbedding.Text;
-      FQuery.ParamByName('embedding').AsString := VectorJSON;
+      FQuery.ParamByName('chunk_id').AsWideString := AEmbedding.ChunkID;
+      FQuery.ParamByName('embedding_text').AsWideString := AEmbedding.Text;
+      FQuery.ParamByName('embedding').AsWideString := VectorJSON;
       FQuery.ExecSQL;
     end;
 
@@ -1406,27 +1413,27 @@ begin
       )
     ''';
 
-    FQuery.ParamByName('name').AsString := AChunk.Name;
-    FQuery.ParamByName('full_name').AsString := AChunk.FullName;
-    FQuery.ParamByName('type').AsString := ChunkTypeStr;
-    FQuery.ParamByName('file_path').AsString := AChunk.FileName;
-    FQuery.ParamByName('content').AsString := FTSContent;  // Use signature for implementations
-    FQuery.ParamByName('enriched_text').AsString := AChunk.EnrichedText;
-    FQuery.ParamByName('spanish_terms').AsString := AChunk.SpanishTerms;
-    FQuery.ParamByName('domain_tags').AsString := AChunk.DomainTags;
-    FQuery.ParamByName('comments').AsString := AChunk.Comments;
-    FQuery.ParamByName('parent_class').AsString := AChunk.ParentClass;
-    FQuery.ParamByName('implemented_interfaces').AsString := AChunk.ImplementedInterfaces.CommaText;
-    FQuery.ParamByName('visibility').AsString := AChunk.Visibility;
+    FQuery.ParamByName('name').AsWideString := AChunk.Name;
+    FQuery.ParamByName('full_name').AsWideString := AChunk.FullName;
+    FQuery.ParamByName('type').AsWideString := ChunkTypeStr;
+    FQuery.ParamByName('file_path').AsWideString := AChunk.FileName;
+    FQuery.ParamByName('content').AsWideString := FTSContent;  // Use signature for implementations
+    FQuery.ParamByName('enriched_text').AsWideString := AChunk.EnrichedText;
+    FQuery.ParamByName('spanish_terms').AsWideString := AChunk.SpanishTerms;
+    FQuery.ParamByName('domain_tags').AsWideString := AChunk.DomainTags;
+    FQuery.ParamByName('comments').AsWideString := AChunk.Comments;
+    FQuery.ParamByName('parent_class').AsWideString := AChunk.ParentClass;
+    FQuery.ParamByName('implemented_interfaces').AsWideString := AChunk.ImplementedInterfaces.CommaText;
+    FQuery.ParamByName('visibility').AsWideString := AChunk.Visibility;
     FQuery.ParamByName('start_line').AsInteger := AChunk.StartLine;
     FQuery.ParamByName('end_line').AsInteger := AChunk.EndLine;
-    FQuery.ParamByName('content_type').AsString := FContentType;
-    FQuery.ParamByName('source_category').AsString := FSourceCategory;
+    FQuery.ParamByName('content_type').AsWideString := FContentType;
+    FQuery.ParamByName('source_category').AsWideString := FSourceCategory;
 
     // Set framework (can be empty string for non-framework code)
     // FireDAC requires DataType before Clear for nullable parameters
     if Framework <> '' then
-      FQuery.ParamByName('framework').AsString := Framework
+      FQuery.ParamByName('framework').AsWideString := Framework
     else
     begin
       FQuery.ParamByName('framework').DataType := ftString;
@@ -1437,7 +1444,7 @@ begin
     FQuery.ParamByName('is_declaration').AsInteger := Ord(AChunk.IsDeclaration);
 
     // Set content hash for cache validation
-    FQuery.ParamByName('content_hash').AsString := ContentHash;
+    FQuery.ParamByName('content_hash').AsWideString := ContentHash;
 
     FQuery.ExecSQL;
 
@@ -1482,9 +1489,9 @@ begin
       FQuery.SQL.Text := 'INSERT INTO vec_embeddings (symbol_id, chunk_id, embedding_text, embedding) ' +
                          'VALUES (:symbol_id, :chunk_id, :embedding_text, :embedding)';
       FQuery.ParamByName('symbol_id').AsInteger := SymbolID;
-      FQuery.ParamByName('chunk_id').AsString := AEmbedding.ChunkID;
-      FQuery.ParamByName('embedding_text').AsString := AEmbedding.Text;
-      FQuery.ParamByName('embedding').AsString := VectorJSON;
+      FQuery.ParamByName('chunk_id').AsWideString := AEmbedding.ChunkID;
+      FQuery.ParamByName('embedding_text').AsWideString := AEmbedding.Text;
+      FQuery.ParamByName('embedding').AsWideString := VectorJSON;
       FQuery.ExecSQL;
     end;
 
@@ -1796,7 +1803,7 @@ begin
 
               // Detect deleted files (in DB but not scanned)
               FQuery.SQL.Text := 'SELECT file_path FROM file_hashes WHERE file_path LIKE :folder_pattern';
-              FQuery.ParamByName('folder_pattern').AsString := AFolderPath + '%';
+              FQuery.ParamByName('folder_pattern').AsWideString := AFolderPath + '%';
               FQuery.Open;
 
               while not FQuery.Eof do
@@ -1859,7 +1866,7 @@ begin
           WriteLn('Checking for deleted files...');
 
           FQuery.SQL.Text := 'SELECT file_path FROM file_hashes WHERE file_path LIKE :folder_pattern';
-          FQuery.ParamByName('folder_pattern').AsString := AFolderPath + '%';
+          FQuery.ParamByName('folder_pattern').AsWideString := AFolderPath + '%';
           FQuery.Open;
 
           while not FQuery.Eof do
@@ -1985,7 +1992,7 @@ begin
       'DELETE FROM query_log ' +
       'WHERE cache_valid = 0 ' +
       '  AND executed_at < datetime(''now'', :days_ago)';
-    FQuery.ParamByName('days_ago').AsString := Format('-%d days', [ADaysToKeep]);
+    FQuery.ParamByName('days_ago').AsWideString := Format('-%d days', [ADaysToKeep]);
     FQuery.ExecSQL;
     DeletedCount := FQuery.RowsAffected;
 
@@ -2029,7 +2036,7 @@ end;
 function TDatabaseBuilder.TableExists(const ATable: string): Boolean;
 begin
   FQuery.SQL.Text := 'SELECT name FROM sqlite_master WHERE type=''table'' AND name=:tablename';
-  FQuery.ParamByName('tablename').AsString := ATable;
+  FQuery.ParamByName('tablename').AsWideString := ATable;
   FQuery.Open;
   try
     Result := not FQuery.Eof;
@@ -2123,6 +2130,9 @@ begin
   // Migrate UNIQUE(name,file_path,type) → UNIQUE(name,file_path,type,start_line)
   // so overloaded symbols at different lines coexist instead of overwriting each other.
   MigrateUniqueConstraintForOverloads;
+
+  // T-67W7: invalidate hashes of databases whose text was stored cp1252-degraded
+  MigrateTextEncoding(FConnection);
 end;
 
 procedure TDatabaseBuilder.MigrateQueryLogToCache;
@@ -2472,6 +2482,70 @@ begin
   WriteLn('that were previously collapsed (e.g., TableMax.Query.pas''s 4 CrearQuery overloads).');
 end;
 
+class procedure TDatabaseBuilder.MigrateTextEncoding(AConnection: TFDConnection);
+var
+  Query: TFDQuery;
+  OwnTransaction: Boolean;
+
+  function Exists(const ASQL: string): Boolean;
+  begin
+    Query.Open(ASQL);
+    try
+      Result := not Query.Eof;
+    finally
+      Query.Close;
+    end;
+  end;
+
+  procedure Exec(const ASQL: string);
+  begin
+    Query.SQL.Text := ASQL;
+    Query.ExecSQL;
+  end;
+
+begin
+  Query := TFDQuery.Create(nil);
+  try
+    Query.Connection := AConnection;
+
+    if not Exists('SELECT 1 FROM sqlite_master WHERE type=''table'' AND name=''metadata''') then
+      Exit; // No metadata yet: CreateTables runs first and the next call marks it
+    if Exists('SELECT 1 FROM metadata WHERE key=''text_encoding'' AND value=''utf16''') then
+      Exit;
+
+    OwnTransaction := not AConnection.InTransaction;
+    if OwnTransaction then
+      AConnection.StartTransaction;
+    try
+      // Empty hashes read as "new" in TChangeDetector (file) and as "changed"
+      // (folder), so every file is deleted and reinserted on its next pass.
+      if Exists('SELECT 1 FROM sqlite_master WHERE type=''table'' AND name=''symbols''') and
+         Exists('SELECT 1 FROM symbols LIMIT 1') then
+      begin
+        WriteLn('Text encoding migration (T-67W7): stored text is cp1252-degraded;');
+        WriteLn('  clearing file/folder hashes so incremental passes reindex everything.');
+        if Exists('SELECT 1 FROM sqlite_master WHERE type=''table'' AND name=''indexed_files''') then
+          Exec('UPDATE indexed_files SET file_hash = ''''');
+        if Exists('SELECT 1 FROM pragma_table_info(''indexed_folders'') WHERE name=''folder_hash''') then
+          Exec('UPDATE indexed_folders SET folder_hash = ''''');
+        if Exists('SELECT 1 FROM sqlite_master WHERE type=''table'' AND name=''file_hashes''') then
+          Exec('UPDATE file_hashes SET file_hash = ''''');
+      end;
+
+      Exec('INSERT OR REPLACE INTO metadata (key, value) VALUES (''text_encoding'', ''utf16'')');
+
+      if OwnTransaction then
+        AConnection.Commit;
+    except
+      if OwnTransaction then
+        AConnection.Rollback;
+      raise;
+    end;
+  finally
+    Query.Free;
+  end;
+end;
+
 function TDatabaseBuilder.DetectFramework(const AFilePath, AUnitName: string): string;
 begin
   // Use new multi-tier framework detector if available
@@ -2696,8 +2770,8 @@ begin
   // Update only the indexed_at timestamp without changing other fields
   FQuery.SQL.Text :=
     'UPDATE indexed_folders SET indexed_at = :indexed_at WHERE folder_path = :folder_path';
-  FQuery.ParamByName('indexed_at').AsString := FormatDateTime('yyyy-mm-dd hh:nn:ss', Now);
-  FQuery.ParamByName('folder_path').AsString := AFolderPath;
+  FQuery.ParamByName('indexed_at').AsWideString := FormatDateTime('yyyy-mm-dd hh:nn:ss', Now);
+  FQuery.ParamByName('folder_path').AsWideString := AFolderPath;
   FQuery.ExecSQL;
 
   if FQuery.RowsAffected > 0 then
@@ -2749,24 +2823,24 @@ begin
         )
       ''';
 
-      FQuery.ParamByName('name').AsString := Copy(Symbol.Name, 1, 255);
-      FQuery.ParamByName('full_name').AsString := Copy(Symbol.FullName, 1, 500);
-      FQuery.ParamByName('type').AsString := Symbol.SymbolType;
-      FQuery.ParamByName('file_path').AsString := Symbol.FilePath;
+      FQuery.ParamByName('name').AsWideString := Copy(Symbol.Name, 1, 255);
+      FQuery.ParamByName('full_name').AsWideString := Copy(Symbol.FullName, 1, 500);
+      FQuery.ParamByName('type').AsWideString := Symbol.SymbolType;
+      FQuery.ParamByName('file_path').AsWideString := Symbol.FilePath;
       FQuery.ParamByName('content').AsWideMemo := Symbol.Content;
       FQuery.ParamByName('enriched_text').AsWideMemo := Symbol.EnrichedText;
       FQuery.ParamByName('comments').AsWideMemo := Symbol.Comments;
-      FQuery.ParamByName('parent_class').AsString := Symbol.ParentClass;
-      FQuery.ParamByName('implemented_interfaces').AsString := Symbol.ImplementedInterfaces;
-      FQuery.ParamByName('visibility').AsString := Symbol.Visibility;
+      FQuery.ParamByName('parent_class').AsWideString := Symbol.ParentClass;
+      FQuery.ParamByName('implemented_interfaces').AsWideString := Symbol.ImplementedInterfaces;
+      FQuery.ParamByName('visibility').AsWideString := Symbol.Visibility;
       FQuery.ParamByName('start_line').AsInteger := Symbol.StartLine;
       FQuery.ParamByName('end_line').AsInteger := Symbol.EndLine;
-      FQuery.ParamByName('content_type').AsString := Symbol.ContentType;
-      FQuery.ParamByName('source_category').AsString := Symbol.SourceCategory;
+      FQuery.ParamByName('content_type').AsWideString := Symbol.ContentType;
+      FQuery.ParamByName('source_category').AsWideString := Symbol.SourceCategory;
 
       // Framework (nullable)
       if Symbol.Framework <> '' then
-        FQuery.ParamByName('framework').AsString := Symbol.Framework
+        FQuery.ParamByName('framework').AsWideString := Symbol.Framework
       else
       begin
         FQuery.ParamByName('framework').DataType := ftString;
@@ -2774,7 +2848,7 @@ begin
       end;
 
       FQuery.ParamByName('is_declaration').AsInteger := Ord(Symbol.IsDeclaration);
-      FQuery.ParamByName('content_hash').AsString := ContentHash;
+      FQuery.ParamByName('content_hash').AsWideString := ContentHash;
       FQuery.ExecSQL;
 
       // Get the symbol ID
@@ -2802,9 +2876,9 @@ begin
         FQuery.SQL.Text := 'INSERT INTO vec_embeddings (symbol_id, chunk_id, embedding_text, embedding) ' +
                            'VALUES (:symbol_id, :chunk_id, :embedding_text, :embedding)';
         FQuery.ParamByName('symbol_id').AsInteger := SymbolID;
-        FQuery.ParamByName('chunk_id').AsString := Symbol.ChunkGUID;
-        FQuery.ParamByName('embedding_text').AsString := Symbol.EmbeddingText;
-        FQuery.ParamByName('embedding').AsString := VectorJSON;
+        FQuery.ParamByName('chunk_id').AsWideString := Symbol.ChunkGUID;
+        FQuery.ParamByName('embedding_text').AsWideString := Symbol.EmbeddingText;
+        FQuery.ParamByName('embedding').AsWideString := VectorJSON;
         FQuery.ExecSQL;
       end;
 

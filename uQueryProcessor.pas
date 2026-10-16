@@ -355,7 +355,7 @@ begin
       '  END' +
       IfThen(FHasIsDeclaration, ', is_declaration DESC ') +
       ' LIMIT 1';
-    FQuery.ParamByName('query').AsString := CleanQuery;
+    FQuery.ParamByName('query').AsWideString := CleanQuery;
     FQuery.Open;
 
     if not FQuery.EOF then
@@ -377,7 +377,7 @@ begin
         BuildFilterClause +
         'ORDER BY LENGTH(name) ' +
         'LIMIT 1';
-      FQuery.ParamByName('query_start').AsString := CleanQuery + '%';
+      FQuery.ParamByName('query_start').AsWideString := CleanQuery + '%';
       FQuery.Open;
 
       if not FQuery.EOF then
@@ -400,7 +400,7 @@ begin
         BuildFilterClause +
         'ORDER BY LENGTH(name) ' +
         'LIMIT 1';
-      FQuery.ParamByName('query').AsString := '%' + CleanQuery + '%';
+      FQuery.ParamByName('query').AsWideString := '%' + CleanQuery + '%';
       FQuery.Open;
 
       if not FQuery.EOF then
@@ -461,7 +461,7 @@ begin
       ', CASE WHEN content LIKE ''%abstract;%'' THEN 1 ELSE 0 END ASC ' +
       ', file_path ' +
       'LIMIT :max_results';
-    FQuery.ParamByName('query').AsString := AQuery;
+    FQuery.ParamByName('query').AsWideString := AQuery;
     FQuery.ParamByName('max_results').AsInteger := AMaxResults;
     FQuery.Open;
 
@@ -516,9 +516,9 @@ begin
       '  LENGTH(name) ' +
       'LIMIT :max_results';
 
-    FQuery.ParamByName('query').AsString := '%' + CleanQuery + '%';
-    FQuery.ParamByName('query_exact').AsString := CleanQuery;
-    FQuery.ParamByName('query_start').AsString := CleanQuery + '%';
+    FQuery.ParamByName('query').AsWideString := '%' + CleanQuery + '%';
+    FQuery.ParamByName('query_exact').AsWideString := CleanQuery;
+    FQuery.ParamByName('query_start').AsWideString := CleanQuery + '%';
     FQuery.ParamByName('max_results').AsInteger := AMaxResults;
     FQuery.Open;
     
@@ -584,7 +584,7 @@ begin
             'ORDER BY fts.rank ' +
             'LIMIT :max_results';
 
-          FQuery.ParamByName('fts_query').AsString := FTSQuery;
+          FQuery.ParamByName('fts_query').AsWideString := FTSQuery;
           FQuery.ParamByName('max_results').AsInteger := AMaxResults;
           FQuery.Open;
 
@@ -634,7 +634,7 @@ begin
         '  END ' +
         'LIMIT :max_results';
 
-      FQuery.ParamByName('search_term').AsString := SearchTerm;
+      FQuery.ParamByName('search_term').AsWideString := SearchTerm;
       FQuery.ParamByName('max_results').AsInteger := AMaxResults;
       FQuery.Open;
 
@@ -831,7 +831,7 @@ begin
       'SELECT * FROM symbols ' +
       'WHERE file_path = :file_path ' +
       'ORDER BY start_line, name';
-    FQuery.ParamByName('file_path').AsString := AFilePath;
+    FQuery.ParamByName('file_path').AsWideString := AFilePath;
     FQuery.Open;
 
     while not FQuery.EOF do
@@ -871,7 +871,7 @@ begin
       '  AND (end_line >= :line OR end_line IS NULL) ' +
       'ORDER BY start_line DESC ' +  // Innermost symbol first
       'LIMIT 1';
-    FQuery.ParamByName('file_path').AsString := AFilePath;
+    FQuery.ParamByName('file_path').AsWideString := AFilePath;
     FQuery.ParamByName('line').AsInteger := ALine + 1;  // Convert to 1-indexed
     FQuery.Open;
 
@@ -940,8 +940,8 @@ begin
           '  s.file_path, s.start_line ' +
           'LIMIT :max_results';
 
-        FQuery.ParamByName('fts_query').AsString := FTSQuery;
-        FQuery.ParamByName('name').AsString := CleanName;
+        FQuery.ParamByName('fts_query').AsWideString := FTSQuery;
+        FQuery.ParamByName('name').AsWideString := CleanName;
         FQuery.ParamByName('max_results').AsInteger := AMaxResults;
         FQuery.Open;
 
@@ -982,10 +982,10 @@ begin
         '  file_path, start_line ' +
         'LIMIT :max_results';
 
-      FQuery.ParamByName('pattern1').AsString := CleanName + ' %';
-      FQuery.ParamByName('pattern2').AsString := '% ' + CleanName + ' %';
-      FQuery.ParamByName('pattern3').AsString := '% ' + CleanName;
-      FQuery.ParamByName('name').AsString := CleanName;
+      FQuery.ParamByName('pattern1').AsWideString := CleanName + ' %';
+      FQuery.ParamByName('pattern2').AsWideString := '% ' + CleanName + ' %';
+      FQuery.ParamByName('pattern3').AsWideString := '% ' + CleanName;
+      FQuery.ParamByName('name').AsWideString := CleanName;
       FQuery.ParamByName('max_results').AsInteger := AMaxResults;
       FQuery.Open;
 

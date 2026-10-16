@@ -330,7 +330,7 @@ begin
 
   // First, try to get framework from database (non-pending packages)
   FQuery.SQL.Text := 'SELECT framework FROM packages WHERE LOWER(package_name) = :package_name';
-  FQuery.ParamByName('package_name').AsString := PackageLower;
+  FQuery.ParamByName('package_name').AsWideString := PackageLower;
   FQuery.Open;
   try
     if not FQuery.Eof then
@@ -351,7 +351,7 @@ begin
 
     // After scanning, query database again
     FQuery.SQL.Text := 'SELECT framework FROM packages WHERE LOWER(package_name) = :package_name';
-    FQuery.ParamByName('package_name').AsString := PackageLower;
+    FQuery.ParamByName('package_name').AsWideString := PackageLower;
     FQuery.Open;
     try
       if not FQuery.Eof then
@@ -523,7 +523,7 @@ begin
   // Check if package exists and hash matches
   FQuery.Close;
   FQuery.SQL.Text := 'SELECT file_hash FROM packages WHERE package_path = :package_path';
-  FQuery.ParamByName('package_path').AsString := APackagePath;
+  FQuery.ParamByName('package_path').AsWideString := APackagePath;
   FQuery.Open;
 
   if FQuery.IsEmpty then
@@ -541,12 +541,12 @@ procedure TPackageScanner.DeletePackage(const APackageName: string);
 begin
   // Delete package_files records (CASCADE will handle this, but explicit for clarity)
   FQuery.SQL.Text := 'DELETE FROM package_files WHERE package_name = :package_name';
-  FQuery.ParamByName('package_name').AsString := APackageName;
+  FQuery.ParamByName('package_name').AsWideString := APackageName;
   FQuery.ExecSQL;
 
   // Delete package record
   FQuery.SQL.Text := 'DELETE FROM packages WHERE package_name = :package_name';
-  FQuery.ParamByName('package_name').AsString := APackageName;
+  FQuery.ParamByName('package_name').AsWideString := APackageName;
   FQuery.ExecSQL;
 end;
 
@@ -581,15 +581,15 @@ begin
     )
   ''';
 
-  FQuery.ParamByName('package_name').AsString := APackageName;
-  FQuery.ParamByName('package_path').AsString := APackagePath;
-  FQuery.ParamByName('framework').AsString := AFramework;
-  FQuery.ParamByName('detection_method').AsString := ADetectionMethod;
-  FQuery.ParamByName('category').AsString := ACategory;
+  FQuery.ParamByName('package_name').AsWideString := APackageName;
+  FQuery.ParamByName('package_path').AsWideString := APackagePath;
+  FQuery.ParamByName('framework').AsWideString := AFramework;
+  FQuery.ParamByName('detection_method').AsWideString := ADetectionMethod;
+  FQuery.ParamByName('category').AsWideString := ACategory;
   FQuery.ParamByName('last_scanned').AsDateTime := Now;
-  FQuery.ParamByName('file_hash').AsString := AFileHash;
-  FQuery.ParamByName('requires_clause').AsString := RequiresStr;
-  FQuery.ParamByName('contains_clause').AsString := ContainsStr;
+  FQuery.ParamByName('file_hash').AsWideString := AFileHash;
+  FQuery.ParamByName('requires_clause').AsWideString := RequiresStr;
+  FQuery.ParamByName('contains_clause').AsWideString := ContainsStr;
   FQuery.ExecSQL;
 
   // Insert file records
@@ -599,9 +599,9 @@ begin
       INSERT INTO package_files (package_name, file_path, source_clause)
       VALUES (:package_name, :file_path, :source_clause)
     ''';
-    FQuery.ParamByName('package_name').AsString := APackageName;
-    FQuery.ParamByName('file_path').AsString := FilePath;
-    FQuery.ParamByName('source_clause').AsString := 'contains';
+    FQuery.ParamByName('package_name').AsWideString := APackageName;
+    FQuery.ParamByName('file_path').AsWideString := FilePath;
+    FQuery.ParamByName('source_clause').AsWideString := 'contains';
     FQuery.ExecSQL;
   end;
 end;

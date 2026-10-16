@@ -159,7 +159,7 @@ begin
       begin
         // Check if entry exists in query_cache
         Query.SQL.Text := 'SELECT hit_count, avg_duration_ms FROM query_cache WHERE query_hash = :hash';
-        Query.ParamByName('hash').AsString := QueryHash;
+        Query.ParamByName('hash').AsWideString := QueryHash;
         Query.Open;
 
         if not Query.EOF then
@@ -178,7 +178,7 @@ begin
               '  last_seen = CURRENT_TIMESTAMP ' +
               'WHERE query_hash = :hash';
             Query.ParamByName('hit_count').AsInteger := ExistingHitCount + 1;
-            Query.ParamByName('hash').AsString := QueryHash;
+            Query.ParamByName('hash').AsWideString := QueryHash;
           end
           else
           begin
@@ -192,13 +192,13 @@ begin
               '  last_seen = CURRENT_TIMESTAMP, ' +
               '  avg_duration_ms = :avg_duration ' +
               'WHERE query_hash = :hash';
-            Query.ParamByName('result_ids').AsString := AResultIDs;
+            Query.ParamByName('result_ids').AsWideString := AResultIDs;
             Query.ParamByName('result_count').AsInteger := AResultCount;
             Query.ParamByName('hit_count').AsInteger := ExistingHitCount + 1;
             // Running average
             Query.ParamByName('avg_duration').AsInteger :=
               (ExistingAvgDuration * ExistingHitCount + ADurationMs) div (ExistingHitCount + 1);
-            Query.ParamByName('hash').AsString := QueryHash;
+            Query.ParamByName('hash').AsWideString := QueryHash;
           end;
 
           Query.ExecSQL;
@@ -218,9 +218,9 @@ begin
               '  :hash, :query_text, :result_ids, :result_count, 1, ' +
               '  1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, :avg_duration' +
               ')';
-            Query.ParamByName('hash').AsString := QueryHash;
-            Query.ParamByName('query_text').AsString := AQueryText;
-            Query.ParamByName('result_ids').AsString := AResultIDs;
+            Query.ParamByName('hash').AsWideString := QueryHash;
+            Query.ParamByName('query_text').AsWideString := AQueryText;
+            Query.ParamByName('result_ids').AsWideString := AResultIDs;
             Query.ParamByName('result_count').AsInteger := AResultCount;
             Query.ParamByName('avg_duration').AsInteger := ADurationMs;
             Query.ExecSQL;
@@ -254,15 +254,15 @@ begin
         '  :duration_ms, :result_count, :cache_hit ' +
         ')';
 
-      Query.ParamByName('query_text').AsString := AQueryText;
-      Query.ParamByName('query_hash').AsString := QueryHash;
-      Query.ParamByName('result_ids').AsString := AResultIDs;
+      Query.ParamByName('query_text').AsWideString := AQueryText;
+      Query.ParamByName('query_hash').AsWideString := QueryHash;
+      Query.ParamByName('result_ids').AsWideString := AResultIDs;
       Query.ParamByName('cache_valid').AsInteger := CacheValid;
       Query.ParamByName('cache_hit').AsInteger := Integer(ACacheHit);
 
       // Filters - FireDAC requires DataType before Clear for nullable parameters
       if ContentTypeFilter <> '' then
-        Query.ParamByName('content_type_filter').AsString := ContentTypeFilter
+        Query.ParamByName('content_type_filter').AsWideString := ContentTypeFilter
       else
       begin
         Query.ParamByName('content_type_filter').DataType := ftString;
@@ -270,7 +270,7 @@ begin
       end;
 
       if SourceCategoryFilter <> '' then
-        Query.ParamByName('source_category_filter').AsString := SourceCategoryFilter
+        Query.ParamByName('source_category_filter').AsWideString := SourceCategoryFilter
       else
       begin
         Query.ParamByName('source_category_filter').DataType := ftString;
@@ -278,7 +278,7 @@ begin
       end;
 
       if PreferCategory <> '' then
-        Query.ParamByName('prefer_category').AsString := PreferCategory
+        Query.ParamByName('prefer_category').AsWideString := PreferCategory
       else
       begin
         Query.ParamByName('prefer_category').DataType := ftString;
@@ -286,7 +286,7 @@ begin
       end;
 
       if DomainTagsFilter <> '' then
-        Query.ParamByName('domain_tags_filter').AsString := DomainTagsFilter
+        Query.ParamByName('domain_tags_filter').AsWideString := DomainTagsFilter
       else
       begin
         Query.ParamByName('domain_tags_filter').DataType := ftString;
@@ -294,7 +294,7 @@ begin
       end;
 
       if SymbolTypeFilter <> '' then
-        Query.ParamByName('symbol_type_filter').AsString := SymbolTypeFilter
+        Query.ParamByName('symbol_type_filter').AsWideString := SymbolTypeFilter
       else
       begin
         Query.ParamByName('symbol_type_filter').DataType := ftString;
@@ -430,7 +430,7 @@ begin
         Query.SQL.Text :=
           'SELECT result_ids, result_count FROM query_cache ' +
           'WHERE query_hash = :hash AND cache_valid = 1';
-        Query.ParamByName('hash').AsString := AQueryHash;
+        Query.ParamByName('hash').AsWideString := AQueryHash;
         Query.Open;
 
         if not Query.EOF then
@@ -456,7 +456,7 @@ begin
           'SELECT result_ids FROM query_log ' +
           'WHERE query_hash = :hash AND cache_valid = 1 ' +
           'ORDER BY executed_at DESC LIMIT 1';
-        Query.ParamByName('hash').AsString := AQueryHash;
+        Query.ParamByName('hash').AsWideString := AQueryHash;
         Query.Open;
 
         if not Query.EOF then
@@ -564,7 +564,7 @@ begin
                 Query.SQL.Text := 'UPDATE query_cache SET cache_valid = 0 WHERE query_hash = :hash'
               else
                 Query.SQL.Text := 'UPDATE query_log SET cache_valid = 0 WHERE query_hash = :hash';
-              Query.ParamByName('hash').AsString := AQueryHash;
+              Query.ParamByName('hash').AsWideString := AQueryHash;
               Query.ExecSQL;
             end;
 

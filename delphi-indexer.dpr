@@ -1121,8 +1121,8 @@ begin
             '  cache_valid = 1, ' +
             '  last_seen = CURRENT_TIMESTAMP ' +
             'WHERE query_hash = :hash';
-          UpdateQuery.ParamByName('result_ids').AsString := NewResultIDs;
-          UpdateQuery.ParamByName('hash').AsString := QueryHash;
+          UpdateQuery.ParamByName('result_ids').AsWideString := NewResultIDs;
+          UpdateQuery.ParamByName('hash').AsWideString := QueryHash;
           UpdateQuery.ExecSQL;
 
           if NewResultIDs = OldResultIDs then
@@ -1138,7 +1138,7 @@ begin
             '  cache_valid = 1, ' +
             '  last_seen = CURRENT_TIMESTAMP ' +
             'WHERE query_hash = :hash';
-          UpdateQuery.ParamByName('hash').AsString := QueryHash;
+          UpdateQuery.ParamByName('hash').AsWideString := QueryHash;
           UpdateQuery.ExecSQL;
           Inc(Unchanged);
         end
@@ -1732,6 +1732,9 @@ begin
 
     WriteLn(Format('  Connected in %d ms', [StepStopwatch.ElapsedMilliseconds]));
 
+    // T-67W7: must run before DetectChanges reads the stored hashes
+    TDatabaseBuilder.MigrateTextEncoding(Connection);
+
     // Step 2: Detect changes using TChangeDetector
     WriteLn('Step 2: Detecting changes (Merkle-style)...');
     StepStopwatch.Reset;
@@ -1794,8 +1797,8 @@ begin
         TouchQuery.Connection := Connection;
         TouchQuery.SQL.Text :=
           'UPDATE indexed_folders SET indexed_at = :indexed_at WHERE folder_path = :folder_path';
-        TouchQuery.ParamByName('indexed_at').AsString := FormatDateTime('yyyy-mm-dd hh:nn:ss', Now);
-        TouchQuery.ParamByName('folder_path').AsString := FolderPath;
+        TouchQuery.ParamByName('indexed_at').AsWideString := FormatDateTime('yyyy-mm-dd hh:nn:ss', Now);
+        TouchQuery.ParamByName('folder_path').AsWideString := FolderPath;
         TouchQuery.ExecSQL;
         Connection.Commit;
       finally
@@ -1928,7 +1931,7 @@ begin
               RemoveQuery.SQL.Text :=
                 'DELETE FROM vec_embeddings WHERE symbol_id IN ' +
                 '(SELECT id FROM symbols WHERE file_path = :file_path)';
-              RemoveQuery.ParamByName('file_path').AsString := ChangedFiles[I];
+              RemoveQuery.ParamByName('file_path').AsWideString := ChangedFiles[I];
               RemoveQuery.ExecSQL;
             except
               // vec_embeddings might not exist
@@ -1939,7 +1942,7 @@ begin
               RemoveQuery.SQL.Text :=
                 'DELETE FROM symbols_fts WHERE rowid IN ' +
                 '(SELECT id FROM symbols WHERE file_path = :file_path)';
-              RemoveQuery.ParamByName('file_path').AsString := ChangedFiles[I];
+              RemoveQuery.ParamByName('file_path').AsWideString := ChangedFiles[I];
               RemoveQuery.ExecSQL;
             except
               // FTS might not exist
@@ -1947,7 +1950,7 @@ begin
 
             // Delete symbols
             RemoveQuery.SQL.Text := 'DELETE FROM symbols WHERE file_path = :file_path';
-            RemoveQuery.ParamByName('file_path').AsString := ChangedFiles[I];
+            RemoveQuery.ParamByName('file_path').AsWideString := ChangedFiles[I];
             RemoveQuery.ExecSQL;
           finally
             RemoveQuery.Free;
