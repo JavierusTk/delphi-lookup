@@ -14,4 +14,5 @@ para que no se pierdan entre sesiones.
 - [delphi-lookup:01-workspace-support-dormant] `open` — 01 — Decidir qué hacer con `Workspace.Support.pas` (durmiente)
 - [delphi-lookup:T-5AF2] `sin status` — TruncateAtImplementation pierde la cuenta con las condicionales de una línea y no trunca el fichero
 - [delphi-lookup:T-67W7] `sin status` — El texto llega a SQLite como cp1252 con best-fit: símbolos y letras no latinas se pierden en delphi_symbols.db
+- [delphi-lookup:T-DSYA] `sin status` — delphi_symbols.db conserva símbolos de carpetas que ya no existen y ningún pase los purga
 <!-- agent-todo:index:end -->
